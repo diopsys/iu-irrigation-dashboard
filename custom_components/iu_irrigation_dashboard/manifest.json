@@ -1,0 +1,25 @@
+{
+  "domain": "iu_irrigation_dashboard",
+  "name": "IU Irrigation Dashboard",
+  "after_dependencies": [
+    "irrigation_unlimited",
+    "recorder"
+  ],
+  "codeowners": [
+    "@diopsys"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend",
+    "panel_custom",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/diopsys/iu-irrigation-dashboard",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/diopsys/iu-irrigation-dashboard/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.3.0"
+}

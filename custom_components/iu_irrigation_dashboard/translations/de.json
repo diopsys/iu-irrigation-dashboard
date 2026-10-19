@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "IU Irrigation Dashboard",
+        "description": "Richtet das Beregnungs-Panel für Irrigation Unlimited ein. Pumpen, Ventile, Zonen, Sequenzen und Pläne werden danach im Panel unter „Einstellungen“ festgelegt. Eine vorhandene Irrigation-Unlimited-Konfiguration wird übernommen."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "IU Irrigation Dashboard ist bereits eingerichtet."
+    }
+  },
+  "issues": {
+    "iu_neustart": {
+      "title": "IU Irrigation Dashboard: Neustart nötig",
+      "description": "Die Konfiguration für Irrigation Unlimited wurde nach {datei} geschrieben. Irrigation Unlimited lädt sie erst nach einem Neustart von Home Assistant."
+    },
+    "iu_include": {
+      "title": "IU Irrigation Dashboard: Packages-Ordner wird nicht geladen",
+      "description": "Die Konfiguration für Irrigation Unlimited liegt in {datei}. Damit Home Assistant sie lädt, muss configuration.yaml den Ordner packages/ einbinden:\n\n```yaml\nhomeassistant:\n  packages: !include_dir_named packages\n```\n\nDanach Home Assistant neu starten."
+    },
+    "iu_konflikt": {
+      "title": "IU Irrigation Dashboard: doppelte Irrigation-Unlimited-Konfiguration",
+      "description": "In configuration.yaml steht noch ein eigener Abschnitt „irrigation_unlimited:“. IU Irrigation Dashboard erzeugt die Konfiguration jetzt selbst in {datei}. Bitte den Abschnitt aus configuration.yaml entfernen und Home Assistant neu starten. (Die Einstellungen wurden beim ersten Start daraus übernommen.)"
+    }
+  }
+}

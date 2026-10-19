@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+tests/.venv/
+# for the optional IU schema check in tests/test_generator.py
+custom_components/irrigation_unlimited/

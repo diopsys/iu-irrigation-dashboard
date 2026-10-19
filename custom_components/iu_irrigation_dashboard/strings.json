@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "IU Irrigation Dashboard",
+        "description": "Sets up the irrigation panel for Irrigation Unlimited. Pumps, valves, zones, sequences and schedules are configured afterwards in the panel under “Settings”. An existing Irrigation Unlimited configuration is imported."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "IU Irrigation Dashboard is already set up."
+    }
+  },
+  "issues": {
+    "iu_neustart": {
+      "title": "IU Irrigation Dashboard: restart required",
+      "description": "The Irrigation Unlimited configuration was written to {datei}. Irrigation Unlimited loads it only after a restart of Home Assistant."
+    },
+    "iu_include": {
+      "title": "IU Irrigation Dashboard: packages folder is not loaded",
+      "description": "The Irrigation Unlimited configuration is stored in {datei}. To load it, configuration.yaml must include the packages/ folder:\n\n```yaml\nhomeassistant:\n  packages: !include_dir_named packages\n```\n\nThen restart Home Assistant."
+    },
+    "iu_konflikt": {
+      "title": "IU Irrigation Dashboard: duplicate Irrigation Unlimited configuration",
+      "description": "configuration.yaml still contains its own “irrigation_unlimited:” section. IU Irrigation Dashboard now generates the configuration in {datei}. Please remove the section from configuration.yaml and restart Home Assistant. (The settings were imported from it on first start.)"
+    }
+  }
+}
