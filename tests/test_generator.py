@@ -28,6 +28,92 @@ def pruefe(name, bedingung, info=""):
         fehler += 1
 
 
+# Schreibweisen, die IU akzeptiert: einzelne Einträge ohne „-“, Listen oder
+# Einzelwerte, Zeiten als Text, Sonnenstand oder cron
+EINZELN = """
+controllers:
+  all_zones_config:
+    show:
+      timeline: true
+  name: Beregnung
+  zones:
+    - name: Terrasse
+      entity_id: switch.valve_1
+    - name: Rasen
+      entity_id: [switch.valve_3, switch.valve_3b]
+  sequences:
+    - delay: "00:01"
+      schedules:
+        - name: Sunrise
+          time:
+            sun: sunrise
+      zones:
+        - zone_id: 2
+        - zone_id: 1
+"""
+
+GEMISCHT = """
+controllers:
+  name: Garten
+  entity_id: switch.pump
+  preamble: 5
+  zones:
+    name: Beet
+    entity_id: switch.valve_beet
+  sequences:
+    name: Morgens
+    delay: {seconds: 30}
+    zones:
+      zone_id: 1
+      duration: "00:15"
+    schedules:
+      - name: Früh
+        time: "05:30"
+        weekday: mon
+        month: jun
+      - name: Abend
+        time: {sun: sunset, before: "00:30"}
+      - name: Cron
+        time: {cron: "0 4 * * *"}
+"""
+
+
+def schreibweisen():
+    for mit_schema in (True, False):
+        art = "mit IU-Schema" if mit_schema else "ohne IU-Schema"
+        gesperrt = "custom_components.irrigation_unlimited.schema"
+        alt = sys.modules.get(gesperrt)
+        if not mit_schema:
+            sys.modules[gesperrt] = None  # → ImportError
+        try:
+            e = ein.aus_iu_konfig(loader.parse_yaml(EINZELN))["controller"]
+            pruefe(f"Übernahme Controller ohne „-“ ({art})",
+                   len(e) == 1 and e[0]["name"] == "Beregnung"
+                   and [(z["name"], z["ventile"]) for z in e[0]["zonen"]]
+                   == [("Terrasse", ["switch.valve_1"]), ("Rasen", ["switch.valve_3", "switch.valve_3b"])]
+                   and [sz["zone"] for sz in e[0]["sequenzen"][0]["zonen"]] == ["c1z2", "c1z1"]
+                   and e[0]["sequenzen"][0]["pause_s"] == 60
+                   and e[0]["sequenzen"][0]["plaene"][0]["zeit"]["bezug"] == "sonnenaufgang")
+            g = ein.aus_iu_konfig(loader.parse_yaml(GEMISCHT))["controller"]
+            s = g[0]["sequenzen"][0] if g else {}
+            p = s.get("plaene", [])
+            pruefe(f"Übernahme gemischter Schreibweisen ({art})",
+                   len(g) == 1 and g[0]["pumpe"]["entity_id"] == "switch.pump" and g[0]["pumpe"]["vorlauf_s"] == 5
+                   and [z["name"] for z in g[0]["zonen"]] == ["Beet"] and g[0]["zonen"][0]["standard_min"] == 15
+                   and s["pause_s"] == 30 and len(p) == 3
+                   and p[0]["zeit"] == {"bezug": "uhrzeit", "versatz_min": 120, "uhrzeit": "05:30"}
+                   and p[0]["tage"] == ["mon"] and p[0]["monate"] == ["jun"]
+                   and p[1]["zeit"]["bezug"] == "sonnenuntergang" and p[1]["zeit"]["versatz_min"] == -30
+                   and p[2]["zeit"]["uhrzeit"] == "06:00")
+        except Exception as err:  # noqa: BLE001
+            pruefe(f"Übernahme Schreibweisen ({art})", False, repr(err))
+        finally:
+            if alt is None:
+                sys.modules.pop(gesperrt, None)
+            else:
+                sys.modules[gesperrt] = alt
+
+
 def main():
     daten = beispiel()
     konfig = iu_yaml.erzeugen(daten)
@@ -79,6 +165,7 @@ def main():
                    [(p["name"], p["monate"], p["tage"], p["zeit"]["bezug"], p["zeit"]["versatz_min"] if p["zeit"]["bezug"] != "uhrzeit" else p["zeit"]["uhrzeit"]) for p in alt_s["plaene"]]
                    == [(p["name"], p["monate"], p["tage"], p["zeit"]["bezug"], p["zeit"]["versatz_min"] if p["zeit"]["bezug"] != "uhrzeit" else p["zeit"]["uhrzeit"]) for p in neu_s["plaene"]])
     pruefe("ohne IU-Konfiguration leer", ein.aus_iu_konfig(None)["controller"] == [])
+    schreibweisen()
     pruefe("Wetterquellen leer vorbelegt", not any(v for k, v in ein.STANDARD["wetter"].items()
                                                   if k in ("regen", "regenrate", "prognose", "temperatur")))
 

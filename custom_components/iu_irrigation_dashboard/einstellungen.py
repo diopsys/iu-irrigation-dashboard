@@ -21,6 +21,7 @@ import logging
 import re
 import uuid
 from copy import deepcopy
+from datetime import time as dt_time
 from typing import Any
 
 import voluptuous as vol
@@ -230,6 +231,36 @@ def _liste(wert: Any) -> list[str]:
     return [str(wert)]
 
 
+def _eintraege(wert: Any) -> list[dict[str, Any]]:
+    """IU-Liste → Einträge; wie cv.ensure_list in IU darf ein einzelner
+    Eintrag ohne „-“ stehen."""
+    if isinstance(wert, dict):
+        return [wert]
+    if isinstance(wert, (list, tuple)):
+        return [w for w in wert if isinstance(w, dict)]
+    return []
+
+
+def _iu_normalisieren(iu: Any) -> dict[str, Any] | None:
+    """IU-Konfiguration mit dem Schema von Irrigation Unlimited in die Form
+    bringen, die IU selbst verwendet (Listen, Zeiten, Entity-IDs). So wird
+    jede Schreibweise übernommen, die IU akzeptiert. Ohne IU oder bei einer
+    Abweichung vom Schema bleibt sie, wie sie ist."""
+    if not isinstance(iu, dict):
+        return None
+    try:
+        from custom_components.irrigation_unlimited.schema import (  # pylint: disable=import-outside-toplevel
+            IRRIGATION_SCHEMA,
+        )
+    except ImportError:
+        return iu
+    try:
+        return IRRIGATION_SCHEMA(deepcopy(iu))
+    except vol.Invalid as err:
+        _LOGGER.warning("IU-Konfiguration entspricht nicht dem IU-Schema (%s) – Übernahme ohne Prüfung", err)
+        return iu
+
+
 def _sekunden(wert: Any, standard: int) -> int:
     try:
         return round(cv.time_period(wert).total_seconds())
@@ -243,15 +274,18 @@ def _schluessel(text: str) -> str:
 
 
 def _plan_zeit(zeit: Any) -> dict[str, Any]:
-    """IU-Startzeit (HH:MM[:SS] oder {sun, before|after}) → zeit."""
-    if isinstance(zeit, dict):
+    """IU-Startzeit (HH:MM[:SS] oder {sun, before|after}) → zeit; cron → 06:00."""
+    if isinstance(zeit, dict) and "sun" in zeit:
         bezug = BEZUG_UNTERGANG if str(zeit.get("sun", "sunrise")) == "sunset" else BEZUG_AUFGANG
         if zeit.get("before") is not None:
             versatz = -_sekunden(zeit["before"], 0) // 60
         else:
             versatz = _sekunden(zeit.get("after", 0), 0) // 60
         return {"bezug": bezug, "versatz_min": max(-720, min(720, versatz)), "uhrzeit": "06:00"}
-    sek = _sekunden(zeit, 6 * 3600) % 86400
+    if isinstance(zeit, dt_time):
+        sek = zeit.hour * 3600 + zeit.minute * 60
+    else:
+        sek = _sekunden(zeit, 6 * 3600) % 86400
     return {"bezug": BEZUG_UHRZEIT, "versatz_min": 120, "uhrzeit": f"{sek // 3600:02d}:{sek % 3600 // 60:02d}"}
 
 
@@ -265,7 +299,8 @@ def aus_iu_konfig(iu: dict[str, Any] | None, hass: HomeAssistant | None = None) 
     """
     daten = deepcopy(STANDARD)
     pumpen: set[str] = set()
-    for ci, c in enumerate((iu or {}).get("controllers") or [], start=1):
+    iu = _iu_normalisieren(iu)
+    for ci, c in enumerate(_eintraege((iu or {}).get("controllers")), start=1):
         cid = f"c{ci}"
         pumpe_ids = _liste(c.get("entity_id"))
         pumpe = pumpe_ids[0] if pumpe_ids and pumpe_ids[0] not in pumpen else None
@@ -289,7 +324,7 @@ def aus_iu_konfig(iu: dict[str, Any] | None, hass: HomeAssistant | None = None) 
 
         # Zonen: IU nummeriert nach Position; zone_id ist optional
         nach_iu_id: dict[str, str] = {}
-        for zi, z in enumerate(c.get("zones") or [], start=1):
+        for zi, z in enumerate(_eintraege(c.get("zones")), start=1):
             ventile = _liste(z.get("entity_id"))
             if not ventile:
                 continue
@@ -304,10 +339,10 @@ def aus_iu_konfig(iu: dict[str, Any] | None, hass: HomeAssistant | None = None) 
 
         # Sequenzen: Standardlaufzeit einer Zone = ihre erste Dauer in einer Sequenz
         standard: dict[str, int] = {}
-        for si, s in enumerate(c.get("sequences") or [], start=1):
+        for si, s in enumerate(_eintraege(c.get("sequences")), start=1):
             seq_dauer = _sekunden(s.get("duration"), 20 * 60) // 60 or 20
             eintraege = []
-            for sz in s.get("zones") or []:
+            for sz in _eintraege(s.get("zones")):
                 minuten = max(1, min(240, _sekunden(sz.get("duration"), seq_dauer * 60) // 60 or seq_dauer))
                 for iu_id in _liste(sz.get("zone_id")):
                     zid = nach_iu_id.get(iu_id)
@@ -317,7 +352,7 @@ def aus_iu_konfig(iu: dict[str, Any] | None, hass: HomeAssistant | None = None) 
                     eintraege.append({"zone": zid, "dauer_min": minuten, "aktiv": sz.get("enabled", True) is not False})
             plaene = []
             gesehen: set[str] = set()
-            for pi, p in enumerate(s.get("schedules") or [], start=1):
+            for pi, p in enumerate(_eintraege(s.get("schedules")), start=1):
                 key = _schluessel(str(p.get("schedule_id") or p.get("name") or f"plan{pi}"))
                 while key in {x["key"] for x in plaene}:
                     key = f"{key}_{pi}"
