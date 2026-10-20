@@ -69,6 +69,7 @@ class Wasserbilanz:
             "tage": [],               # [{tag, et0, regen}] die letzten 30 Tage
             "bilanz": {},             # zone_id → mm
             "minuten": {},            # zone_id → Laufminuten gesamt
+            "wasser_l": {},           # zone_id → Liter gesamt (Wasserzähler)
             "laeufe": {},             # seq_id/ctl_id → letzter Lauf
             "anzahl": {"automatik": 0, "manuell": 0},
         }

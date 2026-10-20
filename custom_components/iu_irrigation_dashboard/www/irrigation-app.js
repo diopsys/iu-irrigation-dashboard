@@ -15,6 +15,8 @@ const IST_AN = ['on', 'open', 'opening'];
 const SCHALT_DOMAINS = ['switch', 'input_boolean', 'valve', 'cover', 'light'];
 const MONATE_IU = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const TAGE_IU = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+// Liter je Einheit eines Wasserzählers (wie wasser.py)
+const LITER_JE = { L: 1, l: 1, 'm³': 1000, m3: 1000, gal: 3.785411784, 'ft³': 28.316846592, ft3: 28.316846592, CCF: 2831.6846592 };
 
 // ── Sprache ───────────────────────────────────────────────────────────
 const KURZ = {
@@ -85,7 +87,6 @@ const TEXTE = {
     'Regen je Monat (mm)': 'Rain per month (mm)', 'Regen je Tag (mm)': 'Rain per day (mm)', 'Beregnung {dauer}': 'irrigation {dauer}', 'Laufzeit je Zone': 'Run time per zone',
     // Einstellungen
     'nicht gefunden': 'not found', 'Nur für Administratoren.': 'Administrators only.',
-    'Noch kein Controller. Ein Controller ist eine Pumpe mit ihren Zonen und Sequenzen.': 'No controller yet. A controller is a pump with its zones and sequences.',
     'Controller anlegen': 'Add controller', 'Controller': 'Controller', 'Wetter und Wasserbilanz': 'Weather and water balance',
     'Regenzähler (Summe, mm)': 'Rain counter (total, mm)', 'Regenrate (mm/h)': 'Rain rate (mm/h)', 'optional – > 0 = es regnet': 'optional – > 0 = raining',
     'Regensensor (an = Regen)': 'Rain sensor (on = rain)', 'optional': 'optional', 'Wetterprognose': 'Weather forecast', 'Temperatur': 'Temperature',
@@ -121,11 +122,24 @@ const TEXTE = {
     // Bedienung
     'Wird gestoppt': 'Stopping', 'Manueller Lauf gestartet': 'Manual run started', 'Sequenz gestartet': 'Sequence started',
     // Meldungen der Integration (status.meldung)
-    'Es ist noch kein Controller angelegt': 'No controller has been set up yet', 'Kein Controller hat eine Pumpe und mindestens eine Zone': 'No controller has a pump and at least one zone',
+    'Es ist noch kein Controller angelegt': 'No controller has been set up yet',
     'In configuration.yaml steht noch eine eigene irrigation_unlimited-Konfiguration. Bitte entfernen und HA neu starten.': 'configuration.yaml still contains its own irrigation_unlimited configuration. Please remove it and restart Home Assistant.',
     'configuration.yaml lädt den Ordner packages/ nicht. Ergänzen: homeassistant: packages: !include_dir_named packages': 'configuration.yaml does not load the packages/ folder. Add: homeassistant: packages: !include_dir_named packages',
     'Irrigation Unlimited ist noch nicht geladen – einmal Home Assistant neu starten.': 'Irrigation Unlimited is not loaded yet – restart Home Assistant once.',
     'Wird nach dem laufenden Lauf übernommen.': 'Will be applied after the current run.',
+    'Kein Controller hat mindestens eine Zone und eine Pumpe oder einen Wasseranschluss': 'No controller has at least one zone and a pump or a water connection',
+    // Wasseranschluss, Preise
+    'Wasseranschluss': 'Water connection', 'Wasseranschluss {name}': 'Water connection {name}', 'Wasser': 'Water', 'fließt': 'flowing',
+    'Hausanschluss': 'Mains', 'Wasserversorgung': 'Water supply', 'Wasserzähler': 'Water meter',
+    'Zähler misst nur die Beregnung (eigener Gartenzähler)': 'Meter measures irrigation only (separate garden meter)',
+    'Grundpreis': 'Base price', 'Wasserpreis': 'Water price', 'Erweitert': 'Advanced', 'Abwasser': 'Wastewater', 'Strompreis': 'Electricity price',
+    'Die Ventile hängen direkt an der Wasserleitung, es gibt keine Pumpe. Mit dem Hauptzähler des Hauses zählt nur der Verbrauch, während eine Zone läuft; mit einem eigenen Gartenzähler der gesamte Verbrauch. Der Grundpreis wird in der Statistik anteilig auf den Zeitraum umgelegt.':
+      'The valves are connected directly to the water mains, there is no pump. With the main meter of the house only the consumption while a zone is running counts; with a separate garden meter all of it. The base price is shared out over the period in the statistics.',
+    'Noch kein Controller. Ein Controller ist eine Pumpe oder ein Wasseranschluss mit Zonen und Sequenzen.': 'No controller yet. A controller is a pump or a water connection with its zones and sequences.',
+    // Statistik: Wasser, Strom, Kosten
+    '{l} Liter': '{l} litres', 'Kosten': 'Costs', 'Wasser {eur}': 'water {eur}', 'Abwasser {eur}': 'wastewater {eur}', 'Grundpreis {eur}': 'base price {eur}', 'Strom {eur}': 'electricity {eur}', 'Strom': 'Electricity',
+    'Wasser je Tag (L)': 'Water per day (L)', 'Wasser je Monat (L)': 'Water per month (L)', 'Strom je Tag (kWh)': 'Electricity per day (kWh)', 'Strom je Monat (kWh)': 'Electricity per month (kWh)',
+    'Kosten je Tag (€)': 'Costs per day (€)', 'Kosten je Monat (€)': 'Costs per month (€)', 'Laufzeit und Wasser je Zone': 'Run time and water per zone',
   },
 };
 let SPRACHE = 'de';
@@ -376,12 +390,15 @@ class BeregnungPanel extends HTMLElement {
   _offen(id) { return IST_AN.includes(this._st(id)); }
 
   _hahnAktiv(z) { return z.wasserhahn && z.betrieb === 'wasserhahn'; }
+  _leitung(ctl) { return ctl?.anschluss === 'leitung'; }
   _ventilOffen(z) { return z.ventile.some((v) => this._offen(v)) || this._an(this._zu().zonen[z.id]); }
   _inAutomatik(ctl, z) {
     return !this._hahnAktiv(z) && (ctl.sequenzen || []).some((s) => s.zonen.some((sz) => sz.zone === z.id && sz.aktiv));
   }
   // aus | standby (an, kein Wasserbezug) | laeuft (Leistung > Schwelle)
   _pumpe(ctl) {
+    // Wasseranschluss: Leitung steht immer unter Druck, „läuft“ = ein Ventil ist offen
+    if (this._leitung(ctl)) return (ctl.zonen || []).some((z) => this._ventilOffen(z)) ? 'laeuft' : 'standby';
     const p = ctl.pumpe || {};
     if (!this._offen(p.entity_id)) return 'aus';
     if (!p.leistung) return 'laeuft';
@@ -409,7 +426,7 @@ class BeregnungPanel extends HTMLElement {
     const zu = this._zu();
     ids.push(...Object.values(zu.controller), ...Object.values(zu.zonen), ...Object.values(zu.sequenzen));
     for (const c of this._ctlListe()) {
-      ids.push(c.pumpe.entity_id, c.pumpe.leistung, ...c.zonen.flatMap((z) => z.ventile));
+      ids.push(c.pumpe.entity_id, c.pumpe.leistung, c.wasser?.zaehler, ...c.zonen.flatMap((z) => z.ventile));
     }
     return ids.filter(Boolean).map((id) => { const s = this._s(id); return s ? s.last_updated : '-'; }).join('|');
   }
@@ -515,7 +532,19 @@ class BeregnungPanel extends HTMLElement {
     this._tick();
   }
 
-  _pumpeText(c, pz) {
+  // Stand des Wasserzählers am Wasseranschluss: { wert, einheit } oder null
+  _zaehlerStand(c) {
+    const z = this._leitung(c) ? c.wasser?.zaehler : null;
+    const wert = z ? num(this._st(z)) : null;
+    if (wert == null) return null;
+    const einheit = this._a(z, 'unit_of_measurement') || '';
+    return { wert: fmt(wert, einheit === 'm³' || einheit === 'm3' ? 3 : 0), einheit };
+  }
+  _pumpeText(c, pz, mitStand = true) {
+    if (this._leitung(c)) {
+      const stand = mitStand ? this._zaehlerStand(c) : null;
+      return `${t(pz === 'laeuft' ? 'fließt' : 'bereit')}${stand ? ` · ${stand.wert} ${stand.einheit}` : ''}`;
+    }
     const w = num(this._st(c.pumpe.leistung));
     return pz === 'aus' ? t('aus') : `${t(pz === 'laeuft' ? 'läuft' : 'bereit')}${w != null ? ` · ${fmt(w)} W` : ''}`;
   }
@@ -523,8 +552,11 @@ class BeregnungPanel extends HTMLElement {
   _kopfstatus() {
     const pills = this._ctlListe().map((c) => {
       const pz = this._pumpe(c);
-      const name = this._ctlListe().length > 1 ? `${c.name}: ` : `${t('Pumpe')} `;
-      return `<span class="pill ${pz !== 'aus' ? 'gruen' : ''} ${pz === 'laeuft' ? 'live' : ''}" title="${esc(t('Pumpe {name}', { name: c.name }))}"><ha-icon icon="mdi:pump"></ha-icon>${esc(name)}${this._pumpeText(c, pz)}</span>`;
+      const leitung = this._leitung(c);
+      const name = this._ctlListe().length > 1 ? `${c.name}: ` : `${t(leitung ? 'Wasser' : 'Pumpe')} `;
+      const titel = t(leitung ? 'Wasseranschluss {name}' : 'Pumpe {name}', { name: c.name });
+      const klasse = leitung ? (pz === 'laeuft' ? 'blau live' : '') : `${pz !== 'aus' ? 'gruen' : ''} ${pz === 'laeuft' ? 'live' : ''}`;
+      return `<span class="pill ${klasse}" title="${esc(titel)}"><ha-icon icon="${leitung ? 'mdi:water-pump-off' : 'mdi:pump'}"></ha-icon>${esc(name)}${this._pumpeText(c, pz)}</span>`;
     }).join('');
     return `${pills}${this._laeuft() ? `<span class="pill blau live"><ha-icon icon="mdi:water"></ha-icon>${t('Beregnung läuft')}</span>` : ''}`;
   }
@@ -575,7 +607,8 @@ class BeregnungPanel extends HTMLElement {
     const pumpt = pz === 'laeuft';
     const offen = zonen.map((z) => this._ventilOffen(z));
     const fliesst = pumpt && offen.some(Boolean);
-    const pumpeText = this._pumpeText(ctl, pz);
+    // im Anlagenbild steht der Zählerstand im Kreis, darunter nur der Zustand
+    const pumpeText = this._pumpeText(ctl, pz, false);
     const lauf = this._aktuellerLauf(ctl);
     const zoneInfo = (z, i) => {
       if (lauf && lauf.zoneId === z.id && lauf.ende) return `<tspan class="rest" data-ende="${lauf.ende.getTime()}"></tspan>`;
@@ -587,20 +620,34 @@ class BeregnungPanel extends HTMLElement {
       <g transform="translate(${x} ${y}) rotate(${rot})" class="ventil ${auf ? 'auf' : ''}">
         <path d="M-11 -9 L11 9 L11 -9 L-11 9 Z"/><line x1="0" y1="0" x2="0" y2="-15"/><rect x="-7" y="-21" width="14" height="6" rx="2"/>
       </g>`;
+    // Sprühfächer: Tropfen fliegen in fünf Strahlen aus der Düse, dahinter ein Nebelkegel
     const regner = (x, y, aktiv, richtung, druck) => {
-      const bogen = [14, 24, 34].map((r, i) => {
-        const d = richtung === 'oben' ? `M${x - r * 0.7} ${y - r * 0.5} Q${x} ${y - r * 1.3} ${x + r * 0.7} ${y - r * 0.5}`
-          : richtung === 'unten' ? `M${x - r * 0.7} ${y + r * 0.5} Q${x} ${y + r * 1.3} ${x + r * 0.7} ${y + r * 0.5}`
-            : `M${x + r * 0.5} ${y - r * 0.7} Q${x + r * 1.3} ${y} ${x + r * 0.5} ${y + r * 0.7}`;
-        return `<path class="spray" style="animation-delay:${i * 0.25}s" d="${d}"/>`;
-      }).join('');
-      return `<g class="regner ${aktiv || druck ? 'aktiv' : ''}"><circle cx="${x}" cy="${y}" r="8"/>${aktiv ? bogen : ''}</g>`;
+      const rechts = richtung === 'rechts';
+      const basis = richtung === 'oben' ? -90 : richtung === 'unten' ? 90 : 0;
+      const winkel = rechts ? [-44, -22, 0, 22, 44] : [-60, -30, 0, 30, 60];
+      const weite = rechts ? 26 : 30;
+      const rad = (g) => (g * Math.PI) / 180;
+      const a1 = rad(basis + winkel[0] - 8), a2 = rad(basis + winkel[winkel.length - 1] + 8);
+      const nebel = `<path class="nebel" d="M${x} ${y} L${x + weite * Math.cos(a1)} ${y + weite * Math.sin(a1)} A${weite} ${weite} 0 0 1 ${x + weite * Math.cos(a2)} ${y + weite * Math.sin(a2)} Z"/>`;
+      const strahlen = winkel.map((w, j) => `<g transform="translate(${x} ${y}) rotate(${basis + w})">${[0, 1, 2].map((k) =>
+        `<circle class="tropfen ${rechts ? 'kurz' : ''}" r="${k === 1 ? 2.4 : 1.9}" style="animation-delay:${(j * 0.17 + k * 0.4).toFixed(2)}s"/>`).join('')}</g>`).join('');
+      return `<g class="regner ${aktiv || druck ? 'aktiv' : ''}">${aktiv ? nebel + strahlen : ''}<circle class="duese" cx="${x}" cy="${y}" r="8"/></g>`;
     };
     const pumpenSymbol = (x, y) => `
       <g class="pumpe ${pumpe ? 'an' : ''} ${pumpt ? 'dreht' : ''}" transform="translate(${x} ${y})">
         <title>${t('Pumpe')} ${pumpeText}</title><circle r="30"/>
         <g class="rad"><path d="M0 -20 L5 -4 L20 0 L4 5 L0 20 L-5 4 L-20 0 L-4 -5 Z"/></g><circle r="4" class="nabe"/>
       </g>`;
+    // Wasseranschluss: Zähler statt Pumpe, Hausanschluss statt Brunnen
+    const leitung = this._leitung(ctl);
+    const quelleName = t(leitung ? 'Wasseranschluss' : 'Pumpe');
+    const stand = this._zaehlerStand(ctl);
+    const zaehlerSymbol = (x, y) => `
+      <g class="zaehler-symbol ${pumpt ? 'an' : ''}" transform="translate(${x} ${y})">
+        <title>${quelleName} ${this._pumpeText(ctl, pz)}</title><circle r="30"/>
+        ${stand ? `<text y="0" class="wert">${esc(stand.wert)}</text><text y="14" class="einheit">${esc(stand.einheit)}</text>` : '<text y="5" class="wert">H₂O</text>'}
+      </g>`;
+    const quelle = leitung ? zaehlerSymbol : pumpenSymbol;
     const gesperrt = (z) => (!this._inAutomatik(ctl, z) && !this._hahnAktiv(z) ? 'gesperrt' : '');
     const letzte = Math.max(-1, ...offen.map((o, i) => (o ? i : -1)));
     const titel = esc(t('Anlagenbild {name}', { name: ctl.name }));
@@ -612,17 +659,24 @@ class BeregnungPanel extends HTMLElement {
       const xEnde = xs.length ? xs[xs.length - 1] : X0;
       const breite = Math.max(1000, xEnde + 60);
       let s = `<svg viewBox="0 0 ${breite} 400" class="anlage" role="img" aria-label="${titel}">`;
-      s += `<g class="brunnen" transform="translate(20 250)"><path d="M0 0 L0 70 Q0 80 10 80 L70 80 Q80 80 80 70 L80 0" class="wand"/><path d="M2 30 Q12 24 22 30 T42 30 T62 30 T78 30 L78 70 Q78 78 70 78 L10 78 Q2 78 2 70 Z" class="wasser"/></g>`;
-      s += `<text x="60" y="352" class="lbl mitte">${t('Brunnen')}</text>`;
+      if (leitung) {
+        s += `<g class="brunnen" transform="translate(20 250)"><path d="M0 80 L0 30 L40 0 L80 30 L80 80 Z" class="wand"/></g>`;
+        s += `<text x="60" y="352" class="lbl mitte">${t('Hausanschluss')}</text>`;
+      } else {
+        s += `<g class="brunnen" transform="translate(20 250)"><path d="M0 0 L0 70 Q0 80 10 80 L70 80 Q80 80 80 70 L80 0" class="wand"/><path d="M2 30 Q12 24 22 30 T42 30 T62 30 T78 30 L78 70 Q78 78 70 78 L10 78 Q2 78 2 70 Z" class="wasser"/></g>`;
+        s += `<text x="60" y="352" class="lbl mitte">${t('Brunnen')}</text>`;
+      }
       s += `<path d="M60 280 L60 ${YM} L120 ${YM}" class="rohr ${pumpe ? 'wasser' : ''}"/>`;
       if (fliesst) s += `<path d="M60 280 L60 ${YM} L120 ${YM}" class="fluss"/>`;
-      s += pumpenSymbol(150, YM);
-      s += `<text x="150" y="${YM + 52}" class="lbl mitte">${t('Pumpe')}</text><text x="150" y="${YM + 70}" class="sub mitte">${pumpeText}</text>`;
       s += `<path d="M180 ${YM} L${xEnde} ${YM}" class="rohr ${pumpe ? 'wasser' : ''}"/>`;
       if (fliesst && letzte >= 0) s += `<path d="M180 ${YM} L${xs[letzte]} ${YM}" class="fluss"/>`;
+      // nach den Rohren zeichnen – der Kreis verdeckt die runden Rohrenden
+      s += quelle(150, YM);
+      s += `<text x="150" y="${YM + 52}" class="lbl mitte">${quelleName}</text><text x="150" y="${YM + 70}" class="sub mitte">${pumpeText}</text>`;
       zonen.forEach((z, i) => {
         const x = xs[i], oben = i % 2 === 0;
-        const yE = oben ? 70 : 330, yV = oben ? 140 : 260;
+        // Regner mit Abstand zu Name/Laufzeit, damit der Sprühfächer sie nicht überdeckt
+        const yE = oben ? 90 : 310, yV = oben ? 140 : 260;
         const nass = offen[i] && pumpe, stroemt = offen[i] && pumpt;
         s += `<g class="zone ${nass ? 'nass' : ''} ${gesperrt(z)}" data-tip="${esc(`<b>${esc(z.name)}</b><br>${t(offen[i] ? 'Ventil offen' : 'Ventil zu')}<br>${t('Standard {min} min', { min: z.standard_min })}`)}">`;
         s += `<rect x="${x - DX / 2}" y="${oben ? 0 : YM}" width="${DX}" height="${oben ? YM : 400 - YM}" class="treffer"/>`;
@@ -638,10 +692,10 @@ class BeregnungPanel extends HTMLElement {
     const ys = zonen.map((_, i) => Y0 + i * DY);
     const yEnde = ys.length ? ys[ys.length - 1] : Y0;
     let s = `<svg viewBox="0 0 360 ${yEnde + 40}" class="anlage" role="img" aria-label="${titel}">`;
-    s += pumpenSymbol(XM, 50);
-    s += `<text x="${XM + 45}" y="45" class="lbl">${t('Pumpe')}</text><text x="${XM + 45}" y="64" class="sub">${pumpeText}</text>`;
     s += `<path d="M${XM} 80 L${XM} ${yEnde}" class="rohr ${pumpe ? 'wasser' : ''}"/>`;
     if (fliesst && letzte >= 0) s += `<path d="M${XM} 80 L${XM} ${ys[letzte]}" class="fluss"/>`;
+    s += quelle(XM, 50);
+    s += `<text x="${XM + 45}" y="45" class="lbl">${quelleName}</text><text x="${XM + 45}" y="64" class="sub">${pumpeText}</text>`;
     zonen.forEach((z, i) => {
       const y = ys[i], nass = offen[i] && pumpe, stroemt = offen[i] && pumpt;
       s += `<g class="zone ${nass ? 'nass' : ''} ${gesperrt(z)}">`;
@@ -702,7 +756,7 @@ class BeregnungPanel extends HTMLElement {
           ${lauf ? this._laufBox(lauf) : ''}
           <div class="zeile-knoepfe">
             <div class="knopfgruppe senkrecht">
-              <label class="schalter"><input type="checkbox" data-tagbetrieb="${esc(c.id)}" ${c.pumpe.tagbetrieb ? 'checked' : ''}><span></span>${t('Pumpe Sonnenauf- bis -untergang')}</label>
+              ${this._leitung(c) ? '' : `<label class="schalter"><input type="checkbox" data-tagbetrieb="${esc(c.id)}" ${c.pumpe.tagbetrieb ? 'checked' : ''}><span></span>${t('Pumpe Sonnenauf- bis -untergang')}</label>`}
               ${haehne.map((z) => this._hahnModus(z)).join('')}
             </div>
             ${this._ctlLaeuft(c) ? `<button class="knopf rot" data-aktion="stopp" data-ctl="${esc(c.id)}"><ha-icon icon="mdi:stop"></ha-icon>${t('Stoppen')}</button>` : ''}
@@ -970,15 +1024,32 @@ class BeregnungPanel extends HTMLElement {
   _zaehlerId(zoneId) {
     return Object.keys(this._hass.states).find((k) => k.startsWith('sensor.') && this._hass.states[k].attributes.zone_id === zoneId);
   }
+  _wasserId(zoneId) {
+    return Object.keys(this._hass.states).find((k) => k.startsWith('sensor.') && this._hass.states[k].attributes.wasser_zone === zoneId);
+  }
   async _statLaden() {
     this._statLaedt = true;
     const { start, ende, period } = this._statBereich();
-    const zonen = this._ctlListe().flatMap((c) => c.zonen.map((z) => ({ ...z, ctl: c, zaehler: this._zaehlerId(z.id) })));
-    const energie = this._ctlListe().map((c) => c.pumpe.energie).filter(Boolean);
+    const ctls = this._ctlListe();
+    const zonen = ctls.flatMap((c) => c.zonen.map((z) => ({ ...z, ctl: c, zaehler: this._zaehlerId(z.id), wasserId: this._leitung(c) ? this._wasserId(z.id) : null })));
+    const energie = ctls.filter((c) => !this._leitung(c) && c.pumpe.energie);
+    // eigener Gartenzähler: der ganze Verbrauch ist Beregnung (Statistik des Zählers)
+    const gartenzaehler = ctls.filter((c) => this._leitung(c) && c.wasser?.zaehler && c.wasser.nur_beregnung);
     const regenId = this._e().wetter.regen;
-    const ids = [...zonen.map((z) => z.zaehler).filter(Boolean), regenId, ...energie, this._laeufeId('automatik'), this._laeufeId('manuell')].filter(Boolean);
+    const ids = [...new Set([...zonen.flatMap((z) => [z.zaehler, z.wasserId]), regenId, ...energie.map((c) => c.pumpe.energie),
+      ...gartenzaehler.map((c) => c.wasser.zaehler), this._laeufeId('automatik'), this._laeufeId('manuell')].filter(Boolean))];
+    const statistik = (von, periode) => this._hass.callWS({ type: 'recorder/statistics_during_period', start_time: von.toISOString(), end_time: ende.toISOString(), statistic_ids: ids, period: periode, types: ['change'] });
     try {
-      const r = await this._hass.callWS({ type: 'recorder/statistics_during_period', start_time: start.toISOString(), end_time: ende.toISOString(), statistic_ids: ids, period, types: ['change'] });
+      // Die Langzeitstatistik entsteht erst stündlich. Die Zeit seit der letzten
+      // fertigen Stunde je Sensor aus der 5-Minuten-Statistik ergänzen.
+      const seit = new Date(Math.max(start.getTime(), ende.getTime() - 3 * 3600e3));
+      const [r, stunden, fuenf] = await Promise.all([statistik(start, period), statistik(seit, 'hour'), statistik(seit, '5minute')]);
+      const ms = (x) => (typeof x === 'number' ? x : Date.parse(x));
+      for (const id of ids) {
+        const fertig = Math.max(seit.getTime(), ...(stunden[id] || []).map((p) => ms(p.end)));
+        const neu = (fuenf[id] || []).filter((p) => ms(p.start) >= fertig);
+        if (neu.length) r[id] = [...(r[id] || []), ...neu];
+      }
       const schritte = [];
       const zt = new Date(start);
       while (zt <= ende) { schritte.push(new Date(zt)); if (period === 'month') zt.setMonth(zt.getMonth() + 1); else zt.setDate(zt.getDate() + 1); }
@@ -989,10 +1060,37 @@ class BeregnungPanel extends HTMLElement {
         return schritte.map((d) => m[key(d)] || 0);
       };
       const summe = (a) => a.reduce((x, y) => x + y, 0);
-      const zonenReihen = zonen.map((z) => ({ ...z, werte: z.zaehler ? reihe(z.zaehler) : schritte.map(() => 0) }));
+      const null_ = () => schritte.map(() => 0);
+      const zonenReihen = zonen.map((z) => ({ ...z, werte: z.zaehler ? reihe(z.zaehler) : null_(), liter: z.wasserId ? reihe(z.wasserId) : null }));
       const beregnung = schritte.map((_, i) => zonenReihen.filter((z) => !this._hahnAktiv(z)).reduce((s, z) => s + z.werte[i], 0));
-      this._statDaten = { period, schritte, zonen: zonenReihen, beregnung, regen: regenId ? reihe(regenId) : schritte.map(() => 0),
-        energie: summe(energie.flatMap((id) => reihe(id))), laeufeAuto: summe(reihe(this._laeufeId('automatik'))), laeufeMan: summe(reihe(this._laeufeId('manuell'))) };
+      // Wasser (Liter), Strom (kWh) und Kosten je Schritt; Grundpreis anteilig (Monate je Schritt)
+      const monateJeSchritt = period === 'month' ? 1 : 12 / 365;
+      const liter = null_(), kwh = null_();
+      const kosten = { wasser: null_(), abwasser: null_(), grund: null_(), strom: null_() };
+      let mitWasser = false, mitStrom = false;
+      for (const c of ctls) {
+        if (this._leitung(c)) {
+          const w = c.wasser || {};
+          if (!w.zaehler) continue;
+          mitWasser = true;
+          const l = w.nur_beregnung
+            ? reihe(w.zaehler).map((v) => v * (LITER_JE[this._a(w.zaehler, 'unit_of_measurement')] ?? 1))
+            : schritte.map((_, i) => zonenReihen.filter((z) => z.ctl.id === c.id && z.liter).reduce((s, z) => s + z.liter[i], 0));
+          l.forEach((v, i) => {
+            liter[i] += v;
+            kosten.wasser[i] += (v / 1000) * (w.preis_m3 || 0);
+            kosten.abwasser[i] += (v / 1000) * (w.abwasser_m3 || 0);
+            kosten.grund[i] += (w.grundpreis_monat || 0) * monateJeSchritt;
+          });
+        } else if (c.pumpe.energie) {
+          mitStrom = true;
+          const faktor = this._a(c.pumpe.energie, 'unit_of_measurement') === 'Wh' ? 0.001 : 1;
+          reihe(c.pumpe.energie).forEach((v, i) => { kwh[i] += v * faktor; kosten.strom[i] += v * faktor * (c.pumpe.strompreis_kwh || 0); });
+        }
+      }
+      this._statDaten = { period, schritte, zonen: zonenReihen, beregnung, regen: regenId ? reihe(regenId) : null_(),
+        energie: summe(kwh), kwh, liter, kosten, mitWasser, mitStrom, mitPumpe: ctls.some((c) => !this._leitung(c)),
+        laeufeAuto: summe(reihe(this._laeufeId('automatik'))), laeufeMan: summe(reihe(this._laeufeId('manuell'))) };
     } catch (e) {
       this._statDaten = { fehler: e.message || String(e) };
     }
@@ -1004,28 +1102,77 @@ class BeregnungPanel extends HTMLElement {
     const d = this._statDaten;
     if (!d) return `<div class="zeitwahl">${knoepfe}</div><section class="karte"><p class="leer pulsiert">${t('Lade Statistik …')}</p></section>`;
     if (d.fehler) return `<div class="zeitwahl">${knoepfe}</div><section class="karte"><p class="leer">${esc(t('Statistik nicht verfügbar: {fehler}', { fehler: d.fehler }))}</p></section>`;
-    const gesamt = d.beregnung.reduce((a, b) => a + b, 0);
+    const summe = (a) => (a || []).reduce((x, y) => x + y, 0);
+    const eur = (v) => `${fmt(v, 2)} €`;
+    const gesamt = summe(d.beregnung);
     const monat = d.period === 'month';
     const labelFn = (x) => (monat ? x.toLocaleDateString(LOCALE, { month: 'short' }) : (d.schritte.length > 10 ? `${x.getDate()}.` : `${wochentag(x)} ${x.getDate()}.`));
     const tipFn = (x) => (monat ? x.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' }) : x.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }));
-    const summen = d.zonen.map((z) => ({ z, s: z.werte.reduce((a, b) => a + b, 0) }));
+    const k = { wasser: [], abwasser: [], grund: [], strom: [], ...(d.kosten || {}) };
+    const kWasser = summe(k.wasser), kAbwasser = summe(k.abwasser), kGrund = summe(k.grund), kStrom = summe(k.strom);
+    const kGesamt = kWasser + kAbwasser + kGrund + kStrom;
+    // Kostenarten: [Werte je Schritt, Summe, Klasse, Text]; nur die mit Betrag
+    const arten = [[k.wasser, kWasser, 'wasser', 'Wasser'], [k.abwasser, kAbwasser, 'abwasser', 'Abwasser'],
+      [k.grund, kGrund, 'grund', 'Grundpreis'], [k.strom, kStrom, 'strom', 'Strom']].filter(([, s]) => s > 0);
+    const liter = summe(d.liter);
+    const summen = d.zonen.map((z) => ({ z, s: summe(z.werte), l: z.liter ? summe(z.liter) : null }));
     const zmax = Math.max(1, ...summen.map((x) => x.s));
-    const balken = summen.map(({ z, s }) => `<div class="hbar"><span class="hbar-name">${esc(z.name)}${this._hahnAktiv(z) ? ` <span class="sub">${t('Hahn')}</span>` : ''}</span><span class="hbar-spur"><i style="width:${(s / zmax) * 100}%"></i></span><span class="hbar-wert">${fmtMin(s)}</span></div>`).join('');
+    const balken = summen.map(({ z, s, l }) => `<div class="hbar"><span class="hbar-name">${esc(z.name)}${this._hahnAktiv(z) ? ` <span class="sub">${t('Hahn')}</span>` : ''}</span><span class="hbar-spur"><i style="width:${(s / zmax) * 100}%"></i></span><span class="hbar-wert">${fmtMin(s)}${l != null ? `<span class="sub"> · ${fmt(l)} L</span>` : ''}</span></div>`).join('');
+    const kostenTeile = arten.map(([, s, , x]) => t(`${x} {eur}`, { eur: eur(s) })).join(' · ');
+    const kacheln = [
+      this._kachel(t('Beregnung'), fmtMin(gesamt), '', t('ohne Zonen im Wasserhahn-Betrieb'), 'blau', 'mdi:sprinkler-variant'),
+      this._kachel(t('Läufe'), fmt(d.laeufeAuto + d.laeufeMan), '', t('{auto} Automatik · {man} manuell', { auto: fmt(d.laeufeAuto), man: fmt(d.laeufeMan) }), 'lila', 'mdi:counter'),
+      this._kachel(t('Regen'), fmt(summe(d.regen), 1), 'mm', t('gemessen'), 'tuerkis', 'mdi:weather-rainy'),
+      d.mitWasser ? this._kachel(t('Wasser'), fmt(liter / 1000, 2), 'm³', t('{l} Liter', { l: fmt(liter) }), 'tuerkis', 'mdi:water') : '',
+      d.mitPumpe !== false ? this._kachel(t('Pumpen'), fmt(d.energie, 1), 'kWh', `${t('Energie')}${kStrom > 0 ? ` · ${eur(kStrom)}` : ''}`, 'gruen', 'mdi:pump') : '',
+      kGesamt > 0 ? this._kachel(t('Kosten'), fmt(kGesamt, 2), '€', kostenTeile, 'gelb', 'mdi:cash') : '',
+    ].join('');
+    const karte = (icon, titel, inhalt) => `<div class="karte"><div class="kopf"><div><ha-icon icon="${icon}"></ha-icon><span>${titel}</span></div></div>${inhalt}</div>`;
+    const kostenTip = (i) => arten.filter(([w]) => w[i] > 0).map(([w, , , x]) => t(`${x} {eur}`, { eur: eur(w[i]) })).join('<br>');
+    const verbrauch = [
+      d.mitWasser ? karte('mdi:water', t(monat ? 'Wasser je Monat (L)' : 'Wasser je Tag (L)'),
+        this._balken(d.schritte, d.liter, 'wasser', labelFn, (x, v) => `<b>${tipFn(x)}</b><br>${t('{l} Liter', { l: fmt(v) })}`)) : '',
+      d.mitStrom ? karte('mdi:lightning-bolt', t(monat ? 'Strom je Monat (kWh)' : 'Strom je Tag (kWh)'),
+        this._balken(d.schritte, d.kwh, 'strom', labelFn, (x, v) => `<b>${tipFn(x)}</b><br>${fmt(v, 2)} kWh`)) : '',
+      kGesamt > 0 ? karte('mdi:cash', t(monat ? 'Kosten je Monat (€)' : 'Kosten je Tag (€)'),
+        this._stapel(d.schritte, arten.map(([w, , c]) => [w, c]), labelFn,
+          (x, i) => `<b>${tipFn(x)}</b><br>${kostenTip(i)}<br><b>${eur(arten.reduce((s, [w]) => s + w[i], 0))}</b>`)
+        + `<div class="legende">${arten.map(([, , c, x]) => `<span><i class="sw ${c}"></i>${t(x)}</span>`).join('')}</div>`) : '',
+    ].filter(Boolean).join('');
     return `
       <div class="zeitwahl">${knoepfe}</div>
-      <section class="kacheln">
-        ${this._kachel(t('Beregnung'), fmtMin(gesamt), '', t('ohne Zonen im Wasserhahn-Betrieb'), 'blau', 'mdi:sprinkler-variant')}
-        ${this._kachel(t('Läufe'), fmt(d.laeufeAuto + d.laeufeMan), '', t('{auto} Automatik · {man} manuell', { auto: fmt(d.laeufeAuto), man: fmt(d.laeufeMan) }), 'lila', 'mdi:counter')}
-        ${this._kachel(t('Regen'), fmt(d.regen.reduce((a, b) => a + b, 0), 1), 'mm', t('gemessen'), 'tuerkis', 'mdi:weather-rainy')}
-        ${this._kachel(t('Pumpen'), fmt(d.energie, 1), 'kWh', t('Energie'), 'gruen', 'mdi:pump')}
-      </section>
+      <section class="kacheln">${kacheln}</section>
       <section class="spalten">
-        <div class="karte"><div class="kopf"><div><ha-icon icon="mdi:sprinkler-variant"></ha-icon><span>${t(monat ? 'Beregnung je Monat (min)' : 'Beregnung je Tag (min)')}</span></div></div>
-          ${this._balken(d.schritte, d.beregnung, 'garten', labelFn, (x, v) => `<b>${tipFn(x)}</b><br>${t('Beregnung {dauer}', { dauer: fmtMin(v) })}`)}</div>
-        <div class="karte"><div class="kopf"><div><ha-icon icon="mdi:weather-rainy"></ha-icon><span>${t(monat ? 'Regen je Monat (mm)' : 'Regen je Tag (mm)')}</span></div></div>
-          ${this._balken(d.schritte, d.regen, 'gemessen', labelFn, (x, v) => `<b>${tipFn(x)}</b><br>${t('Regen {mm} mm', { mm: fmt(v, 1) })}`)}</div>
+        ${karte('mdi:sprinkler-variant', t(monat ? 'Beregnung je Monat (min)' : 'Beregnung je Tag (min)'),
+          this._balken(d.schritte, d.beregnung, 'garten', labelFn, (x, v) => `<b>${tipFn(x)}</b><br>${t('Beregnung {dauer}', { dauer: fmtMin(v) })}`))}
+        ${karte('mdi:weather-rainy', t(monat ? 'Regen je Monat (mm)' : 'Regen je Tag (mm)'),
+          this._balken(d.schritte, d.regen, 'gemessen', labelFn, (x, v) => `<b>${tipFn(x)}</b><br>${t('Regen {mm} mm', { mm: fmt(v, 1) })}`))}
       </section>
-      <section class="karte"><div class="kopf"><div><ha-icon icon="mdi:format-list-bulleted"></ha-icon><span>${t('Laufzeit je Zone')}</span></div></div><div class="hbars">${balken}</div></section>`;
+      ${verbrauch ? `<section class="spalten">${verbrauch}</section>` : ''}
+      <section class="karte"><div class="kopf"><div><ha-icon icon="mdi:format-list-bulleted"></ha-icon><span>${t(d.mitWasser ? 'Laufzeit und Wasser je Zone' : 'Laufzeit je Zone')}</span></div></div><div class="hbars">${balken}</div></section>`;
+  }
+  // gestapelte Balken: teile = [[werte, klasse], …], tipFn(schritt, index)
+  _stapel(schritte, teile, labelFn, tipFn) {
+    const W = 520, H = 220, L = 44, R = 8, T = 12, B = 28;
+    const summen = schritte.map((_, i) => teile.reduce((s, [w]) => s + w[i], 0));
+    const { max, schritt } = achse(Math.max(...summen, 0) || 1);
+    const bw = (W - L - R) / schritte.length;
+    const y = (v) => T + (H - T - B) * (1 - v / max);
+    const jede = Math.ceil(schritte.length / 10);
+    let s = `<svg viewBox="0 0 ${W} ${H}" class="diagramm" role="img">`;
+    for (let v = 0; v <= max + 1e-9; v += schritt) s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="${v === 0 ? 'achse' : 'gitter'}"/><text x="${L - 6}" y="${y(v) + 4}" class="ax r">${fmt(v, schritt < 1 ? 2 : 0)}</text>`;
+    schritte.forEach((x0, i) => {
+      const x = L + i * bw;
+      s += `<g data-tip="${esc(tipFn(x0, i))}"><rect x="${x}" y="${T}" width="${bw}" height="${H - T - B}" class="treffer"/>`;
+      let unten = 0;
+      for (const [w, klasse] of teile) {
+        if (w[i] > 0) s += `<rect x="${x + bw * 0.15}" y="${y(unten + w[i])}" width="${bw * 0.7}" height="${Math.max(1, y(unten) - y(unten + w[i]))}" class="bar ${klasse}"/>`;
+        unten += w[i];
+      }
+      s += '</g>';
+      if (i % jede === 0) s += `<text x="${x + bw / 2}" y="${H - 9}" class="ax mitte">${esc(labelFn(x0))}</text>`;
+    });
+    return s + '</svg>';
   }
   _balken(schritte, werte, klasse, labelFn, tipFn) {
     const W = 520, H = 220, L = 44, R = 8, T = 12, B = 28;
@@ -1060,6 +1207,7 @@ class BeregnungPanel extends HTMLElement {
       <datalist id="dl-schalter">${opt((st) => SCHALT_DOMAINS.includes(dom(st)))}</datalist>
       <datalist id="dl-leistung">${opt(sensor(['W', 'kW']))}</datalist>
       <datalist id="dl-energie">${opt(sensor(['Wh', 'kWh']))}</datalist>
+      <datalist id="dl-wasser">${opt(sensor(Object.keys(LITER_JE)))}</datalist>
       <datalist id="dl-regen">${opt(sensor(['mm', 'in']))}</datalist>
       <datalist id="dl-regenrate">${opt(sensor(['mm/h', 'in/h']))}</datalist>
       <datalist id="dl-binaer">${opt((st) => dom(st) === 'binary_sensor')}</datalist>
@@ -1095,7 +1243,7 @@ class BeregnungPanel extends HTMLElement {
     return `
       ${this._datalisten()}
       <div id="status-leiste">${this._statusLeisteHtml()}</div>
-      ${ctlKarten || `<section class="karte"><p class="leer">${t('Noch kein Controller. Ein Controller ist eine Pumpe mit ihren Zonen und Sequenzen.')}</p></section>`}
+      ${ctlKarten || `<section class="karte"><p class="leer">${t('Noch kein Controller. Ein Controller ist eine Pumpe oder ein Wasseranschluss mit Zonen und Sequenzen.')}</p></section>`}
       <div class="zeile-knoepfe">${this._knopf('e-ctl-neu', 'mdi:plus', t('Controller anlegen'), {}, t('Controller'))}</div>
       <section class="karte">
         <div class="kopf"><div><ha-icon icon="mdi:weather-partly-rainy"></ha-icon><span>${t('Wetter und Wasserbilanz')}</span></div></div>
@@ -1129,8 +1277,33 @@ class BeregnungPanel extends HTMLElement {
       </div>`;
   }
 
+  _einstPumpe(c, p) {
+    return `
+          <label>${t('Pumpe (Schalter)')}${this._entFeld(`${p}.pumpe.entity_id`, c.pumpe.entity_id, 'dl-schalter', 'switch.…')}</label>
+          <label>${t('Leistung (W)')}${this._entFeld(`${p}.pumpe.leistung`, c.pumpe.leistung, 'dl-leistung', t('optional'))}</label>
+          <label>${t('Energie (kWh)')}${this._entFeld(`${p}.pumpe.energie`, c.pumpe.energie, 'dl-energie', t('optional – Statistik'))}</label>
+          <label>${t('Strompreis')}${this._zahlFeld(`${p}.pumpe.strompreis_kwh`, c.pumpe.strompreis_kwh, 0, 10, 0.01, '€/kWh', true, t('optional'))}</label>
+          <label>${t('„Pumpt“ ab')}${this._zahlFeld(`${p}.pumpe.schwelle_w`, c.pumpe.schwelle_w, 0, 5000, 1, 'W')}</label>
+          <label>${t('Vorlauf')}${this._zahlFeld(`${p}.pumpe.vorlauf_s`, c.pumpe.vorlauf_s, 0, 600, 1, 's')}</label>
+          <label>${t('Nachlauf')}${this._zahlFeld(`${p}.pumpe.nachlauf_s`, c.pumpe.nachlauf_s, 0, 600, 1, 's')}</label>
+          ${this._haken(`${p}.pumpe.tagbetrieb`, c.pumpe.tagbetrieb, t('Pumpe von Sonnenauf- bis -untergang an'))}`;
+  }
+  _einstWasser(c, p) {
+    const w = c.wasser || {};
+    return `
+          <label>${t('Wasserzähler')}${this._entFeld(`${p}.wasser.zaehler`, w.zaehler, 'dl-wasser', t('optional – Statistik'))}</label>
+          ${this._haken(`${p}.wasser.nur_beregnung`, w.nur_beregnung, t('Zähler misst nur die Beregnung (eigener Gartenzähler)'))}
+          <label>${t('Grundpreis')}${this._zahlFeld(`${p}.wasser.grundpreis_monat`, w.grundpreis_monat, 0, 1000, 0.01, '€/Monat', true, t('optional'))}</label>
+          <label>${t('Wasserpreis')}${this._zahlFeld(`${p}.wasser.preis_m3`, w.preis_m3, 0, 1000, 0.01, '€/m³', true, t('optional'))}</label>
+          <details class="erweitert"><summary>${t('Erweitert')}</summary>
+            <label>${t('Abwasser')}${this._zahlFeld(`${p}.wasser.abwasser_m3`, w.abwasser_m3, 0, 1000, 0.01, '€/m³', true, t('optional'))}</label>
+          </details>
+          <p class="hinweis">${t('Die Ventile hängen direkt an der Wasserleitung, es gibt keine Pumpe. Mit dem Hauptzähler des Hauses zählt nur der Verbrauch, während eine Zone läuft; mit einem eigenen Gartenzähler der gesamte Verbrauch. Der Grundpreis wird in der Statistik anteilig auf den Zeitraum umgelegt.')}</p>`;
+  }
+
   _einstCtl(c, ci, e) {
     const p = `controller.${ci}`;
+    const leitung = this._leitung(c);
     const zonen = c.zonen.map((z, zi) => `
       <div class="ez">
         <div class="ez-kopf">
@@ -1149,7 +1322,7 @@ class BeregnungPanel extends HTMLElement {
             <label>${t('Standardlaufzeit')}${this._zahlFeld(`${p}.zonen.${zi}.standard_min`, z.standard_min, 1, 240, 1, 'min')}</label>
             <label>${t('Zonenfaktor')}${this._zahlFeld(`${p}.zonen.${zi}.faktor`, z.faktor, 0, 300, 5, '%')}</label>
             <label>${t('Beregnungsleistung')}${this._zahlFeld(`${p}.zonen.${zi}.leistung_mm_h`, z.leistung_mm_h, 0.1, 200, 0.1, 'mm/h', true, t('optional'))}</label>
-            ${this._haken(`${p}.zonen.${zi}.wasserhahn`, z.wasserhahn, t('Kann Wasserhahn sein (Ventil folgt der Pumpe)'))}
+            ${this._leitung(c) ? '' : this._haken(`${p}.zonen.${zi}.wasserhahn`, z.wasserhahn, t('Kann Wasserhahn sein (Ventil folgt der Pumpe)'))}
             ${this._haken(`${p}.zonen.${zi}.regen`, z.regen, t('Regen kürzt die Laufzeit (aus bei überdachten Zonen)'))}
           </div>
         </div>
@@ -1157,16 +1330,14 @@ class BeregnungPanel extends HTMLElement {
     const seqs = c.sequenzen.map((s, si) => this._einstSeq(c, ci, s, si)).join('');
     return `
       <section class="karte">
-        <div class="kopf"><div><ha-icon icon="mdi:pump"></ha-icon><input type="text" class="titel-feld" data-e="${p}.name" value="${esc(c.name)}" maxlength="40" aria-label="${t('Name des Controllers')}"></div>
+        <div class="kopf"><div><ha-icon icon="${leitung ? 'mdi:water-pump-off' : 'mdi:pump'}"></ha-icon><input type="text" class="titel-feld" data-e="${p}.name" value="${esc(c.name)}" maxlength="40" aria-label="${t('Name des Controllers')}"></div>
           ${this._knopf('e-ctl-weg', 'mdi:delete-outline', t('Controller löschen'), { ci }, t('Controller löschen'), 'rot-text')}</div>
         <div class="formular breit">
-          <label>${t('Pumpe (Schalter)')}${this._entFeld(`${p}.pumpe.entity_id`, c.pumpe.entity_id, 'dl-schalter', 'switch.…')}</label>
-          <label>${t('Leistung (W)')}${this._entFeld(`${p}.pumpe.leistung`, c.pumpe.leistung, 'dl-leistung', t('optional'))}</label>
-          <label>${t('Energie (kWh)')}${this._entFeld(`${p}.pumpe.energie`, c.pumpe.energie, 'dl-energie', t('optional – Statistik'))}</label>
-          <label>${t('„Pumpt“ ab')}${this._zahlFeld(`${p}.pumpe.schwelle_w`, c.pumpe.schwelle_w, 0, 5000, 1, 'W')}</label>
-          <label>${t('Vorlauf')}${this._zahlFeld(`${p}.pumpe.vorlauf_s`, c.pumpe.vorlauf_s, 0, 600, 1, 's')}</label>
-          <label>${t('Nachlauf')}${this._zahlFeld(`${p}.pumpe.nachlauf_s`, c.pumpe.nachlauf_s, 0, 600, 1, 's')}</label>
-          ${this._haken(`${p}.pumpe.tagbetrieb`, c.pumpe.tagbetrieb, t('Pumpe von Sonnenauf- bis -untergang an'))}
+          <label>${t('Wasserversorgung')}<select class="auto" data-e="${p}.anschluss" data-zeichnen="1">
+            <option value="pumpe" ${leitung ? '' : 'selected'}>${t('Pumpe')}</option>
+            <option value="leitung" ${leitung ? 'selected' : ''}>${t('Wasseranschluss')}</option>
+          </select></label>
+          ${leitung ? this._einstWasser(c, p) : this._einstPumpe(c, p)}
         </div>
         <div class="unterkopf"><span>${t('Zonen')}</span>${this._knopf('e-zone-neu', 'mdi:plus', t('Zone anlegen'), { ci }, t('Zone'))}</div>
         <div class="ez-liste">${zonen || `<p class="leer">${t('Noch keine Zone.')}</p>`}</div>
@@ -1255,7 +1426,9 @@ class BeregnungPanel extends HTMLElement {
     const neu = () => { this._entwurfGeaendert = true; this._zeichnen(); };
     const tauschen = (liste, a1, a2) => { if (a2 >= 0 && a2 < liste.length) [liste[a1], liste[a2]] = [liste[a2], liste[a1]]; };
     if (a === 'e-ctl-neu') {
-      e.controller.push({ id: zufall('c'), name: t('Controller {n}', { n: e.controller.length + 1 }), pumpe: { entity_id: null, leistung: null, energie: null, schwelle_w: 50, vorlauf_s: 2, nachlauf_s: 2, tagbetrieb: false }, zonen: [], sequenzen: [] });
+      e.controller.push({ id: zufall('c'), name: t('Controller {n}', { n: e.controller.length + 1 }), anschluss: 'pumpe',
+        pumpe: { entity_id: null, leistung: null, energie: null, schwelle_w: 50, vorlauf_s: 2, nachlauf_s: 2, tagbetrieb: false, strompreis_kwh: null },
+        wasser: { zaehler: null, nur_beregnung: false, grundpreis_monat: null, preis_m3: null, abwasser_m3: null }, zonen: [], sequenzen: [] });
       neu();
     } else if (a === 'e-ctl-weg') {
       if (confirm(t('Controller „{name}“ mit allen Zonen und Sequenzen löschen?', { name: c.name }))) { e.controller.splice(ci, 1); neu(); }
@@ -1400,7 +1573,7 @@ class BeregnungPanel extends HTMLElement {
     const el = ev.target;
     const d = el.dataset;
     const paar = (wert) => wert.split('|');
-    if (d.e) { this._entwurfSetzen(d.e, el); return; }
+    if (d.e) { this._entwurfSetzen(d.e, el); if (d.zeichnen) this._zeichnen(); return; }
     if (d.tagbetrieb) this._aendern([{ art: 'pumpe', id: d.tagbetrieb, felder: { tagbetrieb: el.checked } }]);
     else if (d.iuCtl) this._dienst('irrigation_unlimited', el.checked ? 'enable' : 'disable', { entity_id: d.iuCtl });
     else if ('wetterAktiv' in d) this._aendern([{ art: 'wetter', felder: { aktiv: el.checked } }]);
@@ -1524,10 +1697,14 @@ main { padding: 1.25rem 2rem 2rem; display: flex; flex-direction: column; gap: 1
 .ventil line, .ventil rect { stroke: var(--rand2); stroke-width: 2; fill: var(--karte); }
 .ventil.auf path { fill: var(--gruen); stroke: var(--gruen); }
 .ventil.auf rect { fill: var(--gruen); stroke: var(--gruen); }
-.regner circle { fill: var(--karte); stroke: var(--rand2); stroke-width: 2; }
-.regner.aktiv circle { fill: var(--blau); stroke: var(--blau); }
-.spray { fill: none; stroke: var(--blau); stroke-width: 2.5; stroke-linecap: round; opacity: 0; animation: spray 1.2s ease-out infinite; }
-@keyframes spray { 0% { opacity: 0; } 30% { opacity: 1; } 100% { opacity: 0; } }
+.regner .duese { fill: var(--karte); stroke: var(--rand2); stroke-width: 2; }
+.regner.aktiv .duese { fill: var(--blau); stroke: var(--blau); }
+.regner .nebel { fill: var(--blau); opacity: .1; animation: nebel 1.6s ease-in-out infinite; }
+@keyframes nebel { 0%, 100% { opacity: .06; } 50% { opacity: .16; } }
+.regner .tropfen { fill: #7cc4ff; opacity: 0; animation: tropfen 1.2s linear infinite; }
+.regner .tropfen.kurz { animation-name: tropfen-kurz; }
+@keyframes tropfen { 0% { transform: translateX(9px) scale(.5); opacity: 0; } 15% { opacity: 1; } 75% { opacity: .8; } 100% { transform: translateX(30px) scale(1.1); opacity: 0; } }
+@keyframes tropfen-kurz { 0% { transform: translateX(9px) scale(.5); opacity: 0; } 15% { opacity: 1; } 75% { opacity: .8; } 100% { transform: translateX(26px) scale(1.1); opacity: 0; } }
 .zone.gesperrt .lbl { fill: var(--text2); }
 .zone.nass .lbl { fill: var(--blau); }
 .treffer { fill: transparent; }
@@ -1653,6 +1830,19 @@ input[type=range] { width: 100%; accent-color: var(--blau); height: 28px; cursor
 .bar.gemessen { fill: var(--tuerkis); }
 .bar.prognose { fill: var(--lila); }
 .bar.garten { fill: var(--blau); }
+.bar.wasser, .sw.wasser { fill: #38bdf8; background: #38bdf8; }
+.bar.abwasser, .sw.abwasser { fill: #6366f1; background: #6366f1; }
+.bar.grund, .sw.grund { fill: var(--lila); background: var(--lila); }
+.bar.strom, .sw.strom { fill: var(--gelb); background: var(--gelb); }
+.zaehler-symbol > circle { fill: var(--karte); stroke: var(--rand2); stroke-width: 3; }
+.zaehler-symbol.an > circle { stroke: #38bdf8; }
+.zaehler-symbol text { fill: var(--text2); text-anchor: middle; }
+.zaehler-symbol .wert { font-size: 12px; font-weight: 600; }
+.zaehler-symbol .einheit { font-size: 10px; }
+.zaehler-symbol.an text { fill: #38bdf8; }
+.formular select.auto { width: auto; }
+.erweitert summary { cursor: pointer; font-size: .85rem; color: var(--text2); }
+.erweitert[open] summary { margin-bottom: .75rem; }
 .jetzt { stroke: var(--text2); stroke-width: 1; stroke-dasharray: 4 3; }
 .kennlinie .linie { fill: none; stroke: var(--blau); stroke-width: 2; stroke-linejoin: round; }
 .kennlinie .punkt { fill: var(--gelb); stroke: var(--bg2); stroke-width: 2; }

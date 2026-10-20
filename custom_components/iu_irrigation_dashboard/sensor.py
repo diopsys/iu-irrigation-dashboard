@@ -3,6 +3,8 @@
 Zonen          Anzahl Zonen, Attribut „zonen“
 Laufzeit <Z>   Laufminuten je Zone (total_increasing → Langzeitstatistik),
                Attribut zone_id
+Wasser <Z>     Liter je Zone am Wasseranschluss mit Zähler (total_increasing),
+               Attribut wasser_zone
 Verdunstung    ET₀ gestern (mm); Attribute: Prognose, Regen heute/24 h,
                Bilanz und Faktor je Zone
 Automatik-/manuelle Läufe   Anzahl (total_increasing), Attribut laeufe
@@ -14,36 +16,44 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTime
+from homeassistant.const import UnitOfTime, UnitOfVolume
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, SIGNAL_EINSTELLUNGEN
 from .iu_yaml import zuordnung
+from .steuerung import wasser_zaehler
 
 # Namen beim Anlegen (ergeben die Entitäts-IDs); Deutsch nur bei deutscher HA-Sprache
 NAMEN = {
-    "de": {"zonen": "Beregnung Zonen", "laufzeit": "Beregnung Laufzeit {zone}", "verdunstung": "Beregnung Verdunstung",
+    "de": {"zonen": "Beregnung Zonen", "laufzeit": "Beregnung Laufzeit {zone}", "wasser": "Beregnung Wasser {zone}",
+           "verdunstung": "Beregnung Verdunstung",
            "automatik": "Beregnung Automatikläufe", "manuell": "Beregnung manuelle Läufe"},
-    "en": {"zonen": "Irrigation zones", "laufzeit": "Irrigation run time {zone}", "verdunstung": "Irrigation evapotranspiration",
+    "en": {"zonen": "Irrigation zones", "laufzeit": "Irrigation run time {zone}", "wasser": "Irrigation water {zone}",
+           "verdunstung": "Irrigation evapotranspiration",
            "automatik": "Irrigation automatic runs", "manuell": "Irrigation manual runs"},
 }
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     vorhanden: set[str] = set()
+    wasser_vorhanden: set[str] = set()
     namen = NAMEN["de" if (hass.config.language or "").startswith("de") else "en"]
 
     @callback
     def _zonen_ergaenzen() -> None:
-        """Für neu angelegte Zonen Laufzeit-Sensoren anlegen."""
+        """Für neu angelegte Zonen Laufzeit-Sensoren anlegen, am Wasseranschluss
+        mit Zähler auch Wasser-Sensoren."""
         neu = []
         for ctl in entry.runtime_data.daten["controller"]:
             for zone in ctl["zonen"]:
                 if zone["id"] not in vorhanden:
                     vorhanden.add(zone["id"])
                     neu.append(LaufzeitSensor(entry, zone["id"], namen["laufzeit"].format(zone=zone["name"])))
+                if wasser_zaehler(ctl) and zone["id"] not in wasser_vorhanden:
+                    wasser_vorhanden.add(zone["id"])
+                    neu.append(WasserSensor(entry, zone["id"], namen["wasser"].format(zone=zone["name"])))
         if neu:
             async_add_entities(neu)
 
@@ -119,6 +129,34 @@ class LaufzeitSensor(_Basis):
     def extra_state_attributes(self) -> dict[str, Any]:
         # Das Panel findet den Zähler über die Zonen-ID (auch nach Umbenennen)
         return {"zone_id": self._zone_id}
+
+
+class WasserSensor(_Basis):
+    _attr_icon = "mdi:water-outline"
+    _attr_device_class = SensorDeviceClass.WATER
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, entry: ConfigEntry, zone_id: str, name: str) -> None:
+        super().__init__(entry)
+        self._zone_id = zone_id
+        self._attr_unique_id = f"{DOMAIN}_wasser_{zone_id}"
+        self._attr_name = name
+
+    @property
+    def available(self) -> bool:
+        return any(z["id"] == self._zone_id and wasser_zaehler(c)
+                   for c in self._b.daten["controller"] for z in c["zonen"])
+
+    @property
+    def native_value(self) -> float:
+        return round(self._b.bilanz.daten["wasser_l"].get(self._zone_id, 0.0), 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        # Das Panel findet den Sensor über die Zonen-ID (auch nach Umbenennen)
+        return {"wasser_zone": self._zone_id}
 
 
 class VerdunstungSensor(_Basis):

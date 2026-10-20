@@ -31,15 +31,20 @@ def zustaende(daten, laeuft):
     st = [zustand("sun.sun", "above_horizon"),
           zustand("sensor.garden_pump_power", 850 if laeuft else 3, unit_of_measurement="W", friendly_name="Pump power"),
           zustand("sensor.rain_total", 412.3, unit_of_measurement="mm", friendly_name="Rain total"),
+          zustand("sensor.water_meter", 731.887, unit_of_measurement="m³", friendly_name="Water meter"),
+          zustand("sensor.garden_pump_energy", 51.2, unit_of_measurement="kWh", friendly_name="Pump energy"),
           zustand("weather.home", "sunny", friendly_name="Home")]
     for c in daten["controller"]:
-        st.append(zustand(c["pumpe"]["entity_id"], "on" if laeuft or c["id"] == "c1" else "off", friendly_name=f"{c['name']} pump"))
+        if c["pumpe"].get("entity_id"):
+            st.append(zustand(c["pumpe"]["entity_id"], "on" if laeuft or c["id"] == "c1" else "off", friendly_name=f"{c['name']} pump"))
         for i, z in enumerate(c["zonen"]):
             for v in z["ventile"]:
                 offen = (laeuft and i == 0) or z["betrieb"] == "wasserhahn"
                 st.append(zustand(v, "on" if offen else "off", friendly_name=z["name"]))
             st.append(zustand(zu["zonen"][z["id"]], "on" if laeuft and i == 0 else "off"))
             st.append(zustand(f"sensor.irrigation_run_time_{z['id']}", 123.4, zone_id=z["id"], unit_of_measurement="min"))
+            if c["anschluss"] == "leitung":
+                st.append(zustand(f"sensor.irrigation_water_{z['id']}", 840.5, wasser_zone=z["id"], unit_of_measurement="L"))
         aktiv = laeuft and c["id"] == "c1"
         st.append(zustand(zu["controller"][c["id"]], "on" if aktiv else "off", enabled=True,
                           current_start=jetzt.isoformat() if aktiv else None, current_duration="0:20:00",
@@ -94,9 +99,11 @@ var customElements = { define(name, cls) { globalThis.__Panel = cls; } };
 
 STATISTIK = """
 var schritte = [...Array(7)].map((_, i) => new Date(2026, 6, 10 + i));
-p._statDaten = { period: 'day', schritte, beregnung: schritte.map((_, i) => i * 10), regen: schritte.map((_, i) => i * 0.5),
-  zonen: p._ctlListe().flatMap((c) => c.zonen.map((z) => ({ ...z, ctl: c, werte: schritte.map((_, i) => i * 3) }))),
-  energie: 1.2, laeufeAuto: 3, laeufeMan: 1 };
+var reihe = (f) => schritte.map((_, i) => i * f);
+p._statDaten = { period: 'day', schritte, beregnung: reihe(10), regen: reihe(0.5),
+  zonen: p._ctlListe().flatMap((c) => c.zonen.map((z) => ({ ...z, ctl: c, werte: reihe(3), liter: p._leitung(c) ? reihe(40) : null }))),
+  energie: 1.2, kwh: reihe(0.2), liter: reihe(80), kosten: { wasser: reihe(0.13), abwasser: reihe(0.25), grund: reihe(0.08), strom: reihe(0.06) },
+  mitWasser: true, mitStrom: true, mitPumpe: true, laeufeAuto: 3, laeufeMan: 1 };
 """
 TEXT = r"p.{}().replace(/<style[\s\S]*?<\/style>|<datalist[\s\S]*?<\/datalist>|<[^>]+>/g, ' ').replace(/\s+/g, ' ')"
 REITER = ["_uebersicht", "_automatik", "_manuell", "_wetter", "_statistik", "_einstellungen", "_kopfstatus"]

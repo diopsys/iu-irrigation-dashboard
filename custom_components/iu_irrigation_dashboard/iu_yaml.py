@@ -23,7 +23,8 @@ import yaml
 
 from homeassistant.core import HomeAssistant
 
-from .const import BETRIEB_WASSERHAHN, IU_DATEI, IU_DOMAIN
+from .const import ANSCHLUSS_LEITUNG, BETRIEB_WASSERHAHN, IU_DATEI, IU_DOMAIN
+from .einstellungen import pumpe_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,8 +47,10 @@ def _hhmmss(sekunden: int) -> str:
 
 
 def iu_controller(daten: dict[str, Any]) -> list[dict[str, Any]]:
-    """Controller, die in die IU-Datei kommen (Pumpe + mindestens eine Zone)."""
-    return [c for c in daten["controller"] if c["pumpe"].get("entity_id") and c["zonen"]]
+    """Controller, die in die IU-Datei kommen (mindestens eine Zone und eine
+    Pumpe oder der Wasseranschluss)."""
+    return [c for c in daten["controller"]
+            if c["zonen"] and (c["anschluss"] == ANSCHLUSS_LEITUNG or pumpe_id(c))]
 
 
 def iu_sequenzen(ctl: dict[str, Any]) -> list[dict[str, Any]]:
@@ -95,7 +98,7 @@ def vollstaendig(daten: dict[str, Any]) -> str | None:
     if not daten["controller"]:
         return "Es ist noch kein Controller angelegt"
     if not iu_controller(daten):
-        return "Kein Controller hat eine Pumpe und mindestens eine Zone"
+        return "Kein Controller hat mindestens eine Zone und eine Pumpe oder einen Wasseranschluss"
     return None
 
 
@@ -114,20 +117,22 @@ def erzeugen(daten: dict[str, Any]) -> dict[str, Any]:
     for ctl in iu_controller(daten):
         pumpe = ctl["pumpe"]
         nr = {z["id"]: i for i, z in enumerate(ctl["zonen"], start=1)}
-        eintrag: dict[str, Any] = {
-            "name": ctl["name"],
-            "entity_id": pumpe["entity_id"],
-            # IU schaltet die Pumpe nur ein; aus schaltet die Integration
-            # (nach dem Lauf bzw. abends beim Tagbetrieb)
-            "entity_states": "on",
-            "check_back": {"states": "on"},
-            "preamble": _hhmmss(pumpe["vorlauf_s"]),
-            "postamble": _hhmmss(pumpe["nachlauf_s"]),
-            "zones": [
-                {"name": z["name"], "entity_id": z["ventile"] if len(z["ventile"]) > 1 else z["ventile"][0]}
-                for z in ctl["zonen"]
-            ],
-        }
+        eintrag: dict[str, Any] = {"name": ctl["name"]}
+        if pumpe_id(ctl):
+            eintrag.update({
+                "entity_id": pumpe["entity_id"],
+                # IU schaltet die Pumpe nur ein; aus schaltet die Integration
+                # (nach dem Lauf bzw. abends beim Tagbetrieb)
+                "entity_states": "on",
+                "check_back": {"states": "on"},
+                "preamble": _hhmmss(pumpe["vorlauf_s"]),
+                "postamble": _hhmmss(pumpe["nachlauf_s"]),
+            })
+        # Wasseranschluss: kein Controller-Schalter, die Ventile hängen an der Leitung
+        eintrag["zones"] = [
+            {"name": z["name"], "entity_id": z["ventile"] if len(z["ventile"]) > 1 else z["ventile"][0]}
+            for z in ctl["zonen"]
+        ]
         sequenzen = []
         for seq in iu_sequenzen(ctl):
             plaene = [

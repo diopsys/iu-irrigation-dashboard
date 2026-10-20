@@ -5,7 +5,9 @@ eigenen Plänen; Wetter/Wasserbilanz global. Alle Einstellungen liegen als
 ein JSON-Objekt im HA-Speicher (.storage/iu_irrigation_dashboard.einstellungen)
 und werden im Panel bearbeitet.
 
-controller[]: id, name, pumpe{…, tagbetrieb}, zonen[], sequenzen[]
+controller[]: id, name, anschluss (pumpe|leitung), pumpe{…, tagbetrieb, strompreis_kwh},
+             wasser{zaehler, nur_beregnung, grundpreis_monat, preis_m3,
+             abwasser_m3}, zonen[], sequenzen[]
   zonen[]:     id, name, ventile[], standard_min, wasserhahn, betrieb,
                regen, faktor, leistung_mm_h (optional)
   sequenzen[]: id, name, pause_s, wetter, zonen[{zone, dauer_min, aktiv}],
@@ -29,11 +31,20 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
-from .const import BETRIEB_BEREGNUNG, BETRIEB_WASSERHAHN, IU_DOMAIN, MONATE, WOCHENTAGE
+from .const import (
+    ANSCHLUSS_LEITUNG,
+    ANSCHLUSS_PUMPE,
+    BETRIEB_BEREGNUNG,
+    BETRIEB_WASSERHAHN,
+    IU_DOMAIN,
+    MONATE,
+    WOCHENTAGE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 _ENTITY = vol.Any(None, cv.entity_id)
+_PREIS = vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=1000)))
 _SCHLUESSEL = vol.All(cv.string, vol.Match(r"^[a-z0-9]+(_[a-z0-9]+)*$"))
 
 BEZUG_AUFGANG = "sonnenaufgang"
@@ -133,6 +144,20 @@ PUMPE_SCHEMA = vol.Schema(
         vol.Optional("nachlauf_s", default=2): vol.All(vol.Coerce(int), vol.Range(min=0, max=600)),
         # Pumpe von Sonnenauf- bis -untergang an (z. B. für Wasserhähne)
         vol.Optional("tagbetrieb", default=False): cv.boolean,
+        vol.Optional("strompreis_kwh", default=None): _PREIS,     # €/kWh, Statistik
+    }
+)
+
+# Wasseranschluss: Zähler (Garten- oder Hauptzähler) und Preise für die Statistik
+WASSER_SCHEMA = vol.Schema(
+    {
+        vol.Optional("zaehler", default=None): _ENTITY,
+        # an = eigener Gartenzähler (alles ist Beregnung), aus = Hauptzähler
+        # (nur der Verbrauch während der Läufe zählt)
+        vol.Optional("nur_beregnung", default=False): cv.boolean,
+        vol.Optional("grundpreis_monat", default=None): _PREIS,   # €/Monat
+        vol.Optional("preis_m3", default=None): _PREIS,           # €/m³
+        vol.Optional("abwasser_m3", default=None): _PREIS,        # €/m³
     }
 )
 
@@ -140,7 +165,10 @@ CONTROLLER_SCHEMA = vol.Schema(
     {
         vol.Required("id"): _ID,
         vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=40)),
+        # pumpe = Pumpe schaltet IU (wie bisher), leitung = vorhandener Wasseranschluss
+        vol.Optional("anschluss", default=ANSCHLUSS_PUMPE): vol.In([ANSCHLUSS_PUMPE, ANSCHLUSS_LEITUNG]),
         vol.Optional("pumpe", default={}): PUMPE_SCHEMA,
+        vol.Optional("wasser", default={}): WASSER_SCHEMA,
         vol.Optional("zonen", default=[]): [ZONE_SCHEMA],
         vol.Optional("sequenzen", default=[]): [SEQUENZ_SCHEMA],
     }
@@ -191,6 +219,9 @@ def pruefen(daten: dict[str, Any]) -> dict[str, Any]:
         for zone in ctl["zonen"]:
             eindeutig(zone["id"], "Zonen")
             zonen_ids.add(zone["id"])
+            # Wasserhahn-Betrieb folgt der Pumpe – am Wasseranschluss nicht möglich
+            if ctl["anschluss"] == ANSCHLUSS_LEITUNG:
+                zone["wasserhahn"] = False
             if not zone["wasserhahn"]:
                 zone["betrieb"] = BETRIEB_BEREGNUNG
         for seq in ctl["sequenzen"]:
@@ -211,10 +242,16 @@ def pruefen(daten: dict[str, Any]) -> dict[str, Any]:
                                           f"und „{plan['name']}“")
                     gesehen[monat] = plan["name"]
     # eine Pumpe gehört zu genau einem Controller
-    pumpen = [c["pumpe"].get("entity_id") for c in daten["controller"] if c["pumpe"].get("entity_id")]
+    pumpen = [p for p in map(pumpe_id, daten["controller"]) if p]
     if len(pumpen) != len(set(pumpen)):
         raise vol.Invalid("Eine Pumpe ist mehreren Controllern zugeordnet")
     return daten
+
+
+def pumpe_id(ctl: dict[str, Any]) -> str | None:
+    """Schalter der Pumpe – None am Wasseranschluss (die Einstellung bleibt
+    erhalten, falls wieder auf Pumpe umgestellt wird)."""
+    return ctl["pumpe"].get("entity_id") if ctl.get("anschluss", ANSCHLUSS_PUMPE) == ANSCHLUSS_PUMPE else None
 
 
 def neue_id(praefix: str) -> str:
@@ -292,7 +329,7 @@ def _plan_zeit(zeit: Any) -> dict[str, Any]:
 def aus_iu_konfig(iu: dict[str, Any] | None, hass: HomeAssistant | None = None) -> dict[str, Any]:
     """Einstellungen aus einer IU-Konfiguration (Inhalt unter irrigation_unlimited:).
 
-    Übernimmt je Controller Pumpe, Vor-/Nachlauf und Zonen, je Sequenz die
+    Übernimmt je Controller Pumpe (ohne: Wasseranschluss), Vor-/Nachlauf und Zonen, je Sequenz die
     Zonen mit Dauer und Freigabe sowie die Pläne (Monate, Tage, Startzeit).
     Ohne IU-Konfiguration bleiben die Einstellungen leer und werden im Panel
     eingetragen.
@@ -309,6 +346,8 @@ def aus_iu_konfig(iu: dict[str, Any] | None, hass: HomeAssistant | None = None) 
         ctl: dict[str, Any] = {
             "id": cid,
             "name": str(c.get("name") or f"Controller {ci}")[:40],
+            # ohne Pumpe in IU hängen die Ventile an der Wasserleitung
+            "anschluss": ANSCHLUSS_PUMPE if pumpe_ids else ANSCHLUSS_LEITUNG,
             "pumpe": {"entity_id": pumpe, "vorlauf_s": min(600, _sekunden(c.get("preamble"), 2)),
                       "nachlauf_s": min(600, _sekunden(c.get("postamble"), 2))},
             "zonen": [],

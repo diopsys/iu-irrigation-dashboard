@@ -15,6 +15,7 @@ Run from the repository root:
 |---|---|---|
 | Settings and IU file | `tests/.venv/bin/python tests/test_generator.py [--yaml]` | example system (`beispiel.py`) → Irrigation Unlimited configuration, YAML round trip, entity mapping, import of an existing IU configuration, rejected invalid settings. With `custom_components/irrigation_unlimited/` next to it (ignored by git), the result is also validated against the IU schema. |
 | Water balance | `tests/.venv/bin/python tests/test_bilanz.py` | daily balance, soil storage limit, rain per zone, credit for runs, factors and run time percentages; ET₀ against FAO-56 example 18, radiation estimated from temperature when no sensor is set |
+| Water meter | `tests/.venv/bin/python tests/test_wasser.py` | meter readings in litres, consumption shared among the zones that ran between two readings, household use without a run is not counted |
 | Panel | `tests/.venv/bin/python tests/js_render.py [--text]` | renders every tab in German and English, idle and during a run, and reports texts without an English translation |
 | JavaScript syntax | `tests/.venv/bin/python tests/js_syntax.py custom_components/iu_irrigation_dashboard/www/*.js` | compiles the panel code |
 | Python | `tests/.venv/bin/python -m pyflakes custom_components/iu_irrigation_dashboard tests` | unused or undefined names |

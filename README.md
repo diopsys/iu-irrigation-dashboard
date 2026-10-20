@@ -24,9 +24,13 @@ what is running right now.
 - **Weather:** evapotranspiration and rain per day, hourly rain forecast,
   soil water balance and factor per zone.
 - **Statistics:** run time per zone, irrigation and rain per day or month,
-  number of runs, pump energy.
+  number of runs, pump energy; with a water meter or prices also water per
+  day or month, water per zone and costs (water, base price, electricity).
 - **Settings** (administrators): any number of controllers, each with its
-  own pump (switch, optional power and energy sensor, lead time, run-on),
+  own pump (switch, optional power and energy sensor, electricity price,
+  lead time, run-on) or connected directly to the water mains (optional
+  water meter, base price per month, price per m³, wastewater under
+  *Advanced*),
   zones with one or more valves, sequences (a zone may appear in several
   sequences with its own duration), schedules per sequence, weather sources
   and water balance parameters.
@@ -45,6 +49,14 @@ what is running right now.
 - IU only switches the pump **on**. The integration switches it off 30 s
   after the last zone (or at sunset in day mode), so the pump does not
   cycle between zones.
+- **Water connection without pump:** the controller is written to IU
+  without a pump switch; tap mode and day mode are not available. With a
+  water meter the consumption per zone is counted: the amount between two
+  meter readings is shared among the zones that ran in that time. With the
+  main meter of the house only that counts; with a separate garden meter
+  (*meter measures irrigation only*) the statistics use the whole
+  consumption of the meter. An imported IU configuration without pump
+  becomes a water connection.
 - **Water balance per zone:** every day the evapotranspiration (ET₀, FAO-56
   Penman-Monteith) of the previous day is taken from the long-term
   statistics of your weather sensors; effective rain is added (zones marked
@@ -106,6 +118,7 @@ what is running right now.
 | Entity | Description |
 |---|---|
 | `sensor.irrigation_run_time_<zone>` | minutes per zone (total, for statistics) |
+| `sensor.irrigation_water_<zone>` | litres per zone at a water connection with meter (total, for statistics) |
 | `sensor.irrigation_evapotranspiration` | ET₀ of yesterday (mm), attributes with forecast, rain and factor per zone |
 | `sensor.irrigation_automatic_runs`, `sensor.irrigation_manual_runs` | number of runs |
 | `sensor.irrigation_zones` | number of zones, attribute with all zones |
@@ -142,6 +155,12 @@ zeigt, was gerade läuft.
   Dauer, geplante Zeit; Pläne mit Monaten, Tagen, Start fest oder vor/nach
   Sonnenauf-/-untergang, Laufzeit 0–200 %), Manuell (Zonen oder Sequenz mit
   einer Laufzeit 5–200 %), Wetter, Statistik, Einstellungen (nur Admins).
+- **Pumpe oder Wasseranschluss:** Je Controller eine Pumpe (mit Strompreis
+  für die Statistik) oder direkt die Wasserleitung ohne Pumpe. Am
+  Wasseranschluss optional ein Wasserzähler – Hauptzähler (es zählt nur der
+  Verbrauch während der Läufe) oder eigener Gartenzähler – sowie Grundpreis
+  je Monat, Preis je m³ und unter „Erweitert“ Abwasser je m³. Die Statistik
+  zeigt dann Wasser je Tag/Monat und Zone sowie die Kosten.
 - **Wasserhahn-Betrieb:** Eine Zone kann ein Wasserhahn sein – das Ventil
   ist offen, solange die Pumpe läuft, und die Zone fehlt in der Automatik.
   Auf „Beregnung“ umgestellt (z. B. im Urlaub) läuft sie wieder mit.

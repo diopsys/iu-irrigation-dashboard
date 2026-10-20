@@ -9,8 +9,9 @@
   per adjust_time setzen; 0 % → Zone für diesen Lauf aus. Bremse gegen
   Rückkopplung: nicht während eines Laufs, höchstens alle 5 min je Sequenz,
   erst ab 5 %-Punkten Unterschied (Schutz vor Rückkopplung)
-- je Controller: Wasserhahn-Betrieb (Ventil folgt der Pumpe), Tagbetrieb
-  (Pumpe Sonnenauf- bis -untergang), Pumpe 30 s nach Laufende aus
+- je Controller mit Pumpe: Wasserhahn-Betrieb (Ventil folgt der Pumpe),
+  Tagbetrieb (Pumpe Sonnenauf- bis -untergang), Pumpe 30 s nach Laufende aus
+- je Controller am Wasseranschluss mit Zähler: Verbrauch je Zone (wasser.py)
 - manueller Ablauf (Zonen nacheinander per manual_run, abbrechbar)
 - Läufe erfassen: Minuten je Zone, Gutschrift in der Bilanz, letzter Lauf
 """
@@ -41,6 +42,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ANSCHLUSS_LEITUNG,
     ANWENDEN_VERZOEGERUNG,
     BETRIEB_BEREGNUNG,
     BETRIEB_WASSERHAHN,
@@ -54,7 +56,8 @@ from .const import (
     STORAGE_VERSION,
     WASSERHAHN_AUS_VERZOEGERUNG,
 )
-from .einstellungen import STANDARD, bestand_uebernehmen, laden, pruefen
+from . import wasser
+from .einstellungen import STANDARD, bestand_uebernehmen, laden, pruefen, pumpe_id
 from .iu_yaml import (
     _hhmmss,
     als_text,
@@ -115,6 +118,8 @@ class Beregnung:
         self._manuell_info: dict[str, dict[str, Any]] = {}
         self._seq_start: dict[str, tuple[datetime, str | None]] = {}
         self._zonen_start: dict[str, datetime] = {}
+        # je Wasserzähler: [[zone_id, start, ende | None], …] (wasser.verteilen)
+        self._wasser_segmente: dict[str, list[list]] = {}
         self._timer: dict[str, Callable] = {}
         self._beobachter: list[Callable] = []
         self._dauerhaft: list[Callable] = []
@@ -173,6 +178,7 @@ class Beregnung:
         self.zustand["zuordnung"] = zuordnung(self.daten)
         self.zustand["wetter"] = self.bilanz.aktuell
         self.zustand["minuten"] = self.bilanz.daten["minuten"]
+        self.zustand["wasser_l"] = self.bilanz.daten["wasser_l"]
         self.zustand["laeufe"] = self.bilanz.daten["laeufe"]
         self.zustand["anzahl"] = self.bilanz.daten["anzahl"]
         self.zustand["manuell"] = self._manuell_info
@@ -457,11 +463,13 @@ class Beregnung:
             abmelden()
         self._beobachter.clear()
         zu = zuordnung(self.daten)
-        pumpen = {c["pumpe"]["entity_id"]: c for c in self.daten["controller"] if c["pumpe"].get("entity_id")}
+        pumpen = {pumpe_id(c): c for c in self.daten["controller"] if pumpe_id(c)}
         ctl_entity = {e: cid for cid, e in zu["controller"].items()}
         zonen_entity = {e: zid for zid, e in zu["zonen"].items()}
         seq_entity = {e: sid for sid, e in zu["sequenzen"].items()}
-        alle = [*pumpen, *ctl_entity, *zonen_entity, *seq_entity]
+        zaehler = {wasser_zaehler(c) for c in self.daten["controller"]} - {None}
+        self._wasser_segmente = {z: self._wasser_segmente.get(z, []) for z in zaehler}
+        alle = [*pumpen, *ctl_entity, *zonen_entity, *seq_entity, *zaehler]
         if not alle:
             return
 
@@ -480,6 +488,8 @@ class Beregnung:
                 self._zone_geaendert(zonen_entity[eid], alt, neu)
             if eid in seq_entity:
                 self._sequenz_geaendert(seq_entity[eid], alt, neu)
+            if eid in zaehler:
+                self._zaehler_geaendert(eid, alt, neu)
 
         self._beobachter.append(async_track_state_change_event(self.hass, alle, _geaendert))
 
@@ -491,18 +501,47 @@ class Beregnung:
         return None, None
 
     def _zone_geaendert(self, zone_id: str, alt: Any, neu: Any) -> None:
+        ctl, zone = self._ctl_der_zone(zone_id)
+        segmente = self._wasser_segmente.get(wasser_zaehler(ctl)) if ctl else None
         if neu.state == "on" and (alt is None or alt.state != "on"):
             self._zonen_start[zone_id] = dt_util.utcnow()
+            if segmente is not None:
+                segmente.append([zone_id, dt_util.utcnow(), None])
         elif alt is not None and alt.state == "on" and neu.state != "on":
             start = self._zonen_start.pop(zone_id, alt.last_changed)
             minuten = (dt_util.utcnow() - start).total_seconds() / 60
-            ctl, zone = self._ctl_der_zone(zone_id)
+            for seg in segmente or []:
+                if seg[0] == zone_id and seg[2] is None:
+                    seg[2] = dt_util.utcnow()
             if zone and 0 < minuten < 24 * 60:
                 self.bilanz.lauf_gutschreiben(zone, minuten, self.daten)
                 self._melden()
             if ctl and zone and zone["wasserhahn"]:
                 # IU hat das Ventil nach dem Lauf geschlossen → Hahn ggf. wieder auf
                 self._planen(f"hahn_{ctl['id']}", 5, lambda c=ctl: self._hahn_abgleichen(c))
+
+    def _zaehler_geaendert(self, zaehler: str, alt: Any, neu: Any) -> None:
+        """Neuer Zählerstand → Menge seit der letzten Meldung auf die Zonen
+        verteilen, die in diesem Zeitraum liefen."""
+        segmente = self._wasser_segmente.get(zaehler)
+        if alt is None or segmente is None:
+            return
+        vorher = wasser.liter(alt.state, alt.attributes.get("unit_of_measurement"))
+        jetzt = wasser.liter(neu.state, neu.attributes.get("unit_of_measurement"))
+        if vorher is None or jetzt is None:
+            return
+        von = getattr(alt, "last_reported", None) or alt.last_updated
+        bis = neu.last_updated
+        menge = jetzt - vorher
+        if 0 < menge <= wasser.MAX_SPRUNG_L:
+            verteilt = wasser.verteilen(segmente, von, bis, menge)
+            for zone_id, liter in verteilt.items():
+                summe = self.bilanz.daten["wasser_l"]
+                summe[zone_id] = round(summe.get(zone_id, 0.0) + liter, 2)
+            if verteilt:
+                self.bilanz.speichern()
+                self._melden()
+        self._wasser_segmente[zaehler] = wasser.aufraeumen(segmente, bis)
 
     def _sequenz_geaendert(self, seq_id: str, alt: Any, neu: Any) -> None:
         if neu.state == "on" and (alt is None or alt.state != "on"):
@@ -540,7 +579,7 @@ class Beregnung:
     async def _tagbetrieb(self, ctl: dict[str, Any]) -> None:
         """Pumpe tagsüber an (Tagbetrieb), abends aus – außer es läuft etwas."""
         ctl = self._ctl_nach_id(ctl["id"]) or ctl
-        pumpe = ctl["pumpe"].get("entity_id")
+        pumpe = pumpe_id(ctl)
         if not pumpe or not ctl["pumpe"]["tagbetrieb"]:
             return
         if self._ist_tag():
@@ -564,14 +603,14 @@ class Beregnung:
             return
         if ctl["pumpe"]["tagbetrieb"] and self._ist_tag():
             return
-        if _an(self.hass, ctl["pumpe"].get("entity_id")):
-            await self._schalten(ctl["pumpe"]["entity_id"], False)
+        if _an(self.hass, pumpe_id(ctl)):
+            await self._schalten(pumpe_id(ctl), False)
 
     async def _hahn_abgleichen(self, ctl: dict[str, Any], wechsel: str | None = None) -> None:
         """Ventile im Wasserhahn-Betrieb auf den Pumpenzustand bringen; beim
         Wechsel auf Beregnung den Hahn schließen (außer die Zone läuft)."""
         ctl = self._ctl_nach_id(ctl["id"]) or ctl
-        pumpe_an = _an(self.hass, ctl["pumpe"].get("entity_id"))
+        pumpe_an = _an(self.hass, pumpe_id(ctl))
         zu = zuordnung(self.daten)
         for zone in ctl["zonen"]:
             if not zone["wasserhahn"]:
@@ -693,6 +732,13 @@ class Beregnung:
             self.bilanz.speichern()
             self._melden()
             self._planen(f"pumpe_aus_{ctl['id']}", PUMPE_AUS_NACH_LAUF, lambda c=ctl["id"]: self._pumpe_nach_lauf(c))
+
+
+def wasser_zaehler(ctl: dict[str, Any] | None) -> str | None:
+    """Wasserzähler eines Controllers am Wasseranschluss, sonst None."""
+    if not ctl or ctl["anschluss"] != ANSCHLUSS_LEITUNG:
+        return None
+    return ctl["wasser"]["zaehler"]
 
 
 def _sekunden(s: int):

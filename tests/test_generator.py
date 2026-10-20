@@ -132,8 +132,12 @@ def main():
     except ImportError:
         print("–       IU-Schema übersprungen (Irrigation Unlimited nicht unter custom_components/)")
 
-    c1, c2 = z["controllers"]
-    pruefe("2 Controller, 2 + 1 Sequenzen", len(c1["sequences"]) == 2 and len(c2["sequences"]) == 1)
+    c1, c2, c3 = z["controllers"]
+    pruefe("3 Controller, 2 + 1 + 1 Sequenzen", len(c1["sequences"]) == 2 and len(c2["sequences"]) == 1 and len(c3["sequences"]) == 1)
+    pruefe("Wasseranschluss: ohne Pumpe, Vor-/Nachlauf in IU",
+           not {"entity_id", "entity_states", "check_back", "preamble", "postamble"} & set(c3) and len(c3["zones"]) == 2)
+    pruefe("Wasseranschluss: kein Wasserhahn-Betrieb", daten["controller"][2]["zonen"][1]["wasserhahn"] is False
+           and c3["sequences"][0]["zones"][1]["enabled"] is True)
     pruefe("Zone mit zwei Ventilen", c1["zones"][1]["entity_id"] == ["switch.valve_beds", "valve.beds_2"])
     s1, s2 = c1["sequences"]
     pruefe("eigene Dauer je Sequenz", s1["zones"][1]["duration"] == "00:10:00" and s2["zones"][0]["duration"] == "00:07:00")
@@ -146,13 +150,22 @@ def main():
     pruefe("Pumpe schaltet IU nur ein", c1["entity_states"] == "on" and c1["check_back"] == {"states": "on"})
     zu = iu_yaml.zuordnung(daten)
     pruefe("Zuordnung", zu["controller"]["c2"].endswith("c2_m") and zu["zonen"]["front"].endswith("c2_z1")
-           and zu["sequenzen"]["s2"].endswith("c1_s2"))
+           and zu["sequenzen"]["s2"].endswith("c1_s2") and zu["zonen"]["pots"].endswith("c3_z1"))
+    umgestellt = copy.deepcopy(daten)
+    umgestellt["controller"][0]["anschluss"] = "leitung"
+    u = iu_yaml.erzeugen(ein.pruefen(umgestellt))["controllers"][0]
+    pruefe("Pumpe → Wasseranschluss: Pumpe nicht mehr in IU, Einstellung bleibt",
+           "entity_id" not in u and ein.pruefen(umgestellt)["controller"][0]["pumpe"]["entity_id"] == "switch.garden_pump")
+    ohne = copy.deepcopy(daten)
+    ohne["controller"][0]["pumpe"]["entity_id"] = None
+    pruefe("Pumpe ohne Schalter fehlt in IU", [c["name"] for c in iu_yaml.erzeugen(ein.pruefen(ohne))["controllers"]] == ["Front yard", "Patio"])
 
     # 2. Übernahme der erzeugten Konfiguration
     neu = ein.aus_iu_konfig(z)
+    pruefe("Übernahme: ohne Pumpe → Wasseranschluss", [c["anschluss"] for c in neu["controller"]] == ["pumpe", "pumpe", "leitung"])
     for alt_c, neu_c in zip(daten["controller"], neu["controller"]):
         pruefe(f"Übernahme {alt_c['name']}: Pumpe, Zonen, Ventile",
-               neu_c["pumpe"]["entity_id"] == alt_c["pumpe"]["entity_id"]
+               neu_c["pumpe"].get("entity_id") == alt_c["pumpe"].get("entity_id")
                and [(x["name"], x["ventile"]) for x in neu_c["zonen"]] == [(x["name"], x["ventile"]) for x in alt_c["zonen"]])
         for alt_s, neu_s in zip(alt_c["sequenzen"], neu_c["sequenzen"]):
             alt_z = {zz["id"]: zz for zz in alt_c["zonen"]}
@@ -177,6 +190,8 @@ def main():
         ("Pumpe doppelt", lambda d: d["controller"][1]["pumpe"].update(entity_id="switch.garden_pump")),
         ("Zonen-ID doppelt", lambda d: d["controller"][1]["zonen"][0].update(id="lawn")),
         ("Laufzeit über 200 %", lambda d: d["controller"][0]["sequenzen"][0]["plaene"][0].update(laufzeit=250)),
+        ("unbekannter Anschluss", lambda d: d["controller"][2].update(anschluss="brunnen")),
+        ("negativer Wasserpreis", lambda d: d["controller"][2]["wasser"].update(preis_m3=-1)),
     ):
         d = copy.deepcopy(daten)
         kaputt(d)

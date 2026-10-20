@@ -1,5 +1,6 @@
-"""Beispielanlage für die Tests: zwei Controller, mehrere Sequenzen, alle
-Arten von Startzeiten, eine Zone als Wasserhahn."""
+"""Beispielanlage für die Tests: zwei Controller mit Pumpe, einer am
+Wasseranschluss mit Zähler und Preisen, mehrere Sequenzen, alle Arten von
+Startzeiten, eine Zone als Wasserhahn."""
 
 import sys
 from pathlib import Path
@@ -16,7 +17,8 @@ def beispiel() -> dict:
         "controller": [
             {
                 "id": "c1", "name": "Garden",
-                "pumpe": {"entity_id": "switch.garden_pump", "leistung": "sensor.garden_pump_power", "tagbetrieb": False},
+                "pumpe": {"entity_id": "switch.garden_pump", "leistung": "sensor.garden_pump_power", "tagbetrieb": False,
+                          "energie": "sensor.garden_pump_energy", "strompreis_kwh": 0.32},
                 "zonen": [
                     {"id": "lawn", "name": "Lawn", "ventile": ["switch.valve_lawn"], "standard_min": 20},
                     {"id": "beds", "name": "Beds", "ventile": ["switch.valve_beds", "valve.beds_2"], "standard_min": 15, "faktor": 50},
@@ -49,6 +51,16 @@ def beispiel() -> dict:
                 "zonen": [{"id": "front", "name": "Front lawn", "ventile": ["switch.valve_front"], "standard_min": 15}],
                 "sequenzen": [{"id": "s3", "name": "Front", "zonen": [{"zone": "front"}],
                                "plaene": [{"key": "all", "name": "All year", "monate": ein.MONATE, "tage": ["thu"]}]}],
+            },
+            {
+                "id": "c3", "name": "Patio", "anschluss": "leitung",
+                "wasser": {"zaehler": "sensor.water_meter", "grundpreis_monat": 2.5, "preis_m3": 2.1, "abwasser_m3": 2.6},
+                "zonen": [{"id": "pots", "name": "Pots", "ventile": ["valve.pots"], "standard_min": 5},
+                          {"id": "herbs", "name": "Herbs", "ventile": ["switch.valve_herbs"], "standard_min": 8,
+                           "wasserhahn": True, "betrieb": "wasserhahn"}],
+                "sequenzen": [{"id": "s4", "name": "Patio", "zonen": [{"zone": "pots"}, {"zone": "herbs"}],
+                               "plaene": [{"key": "daily", "name": "Daily", "monate": ["jun", "jul"], "tage": ein.WOCHENTAGE,
+                                           "zeit": {"bezug": "uhrzeit", "uhrzeit": "07:00"}}]}],
             },
         ],
         "wetter": {"regen": "sensor.rain_total", "regenrate": "sensor.rain_rate", "prognose": "weather.home",

@@ -23,6 +23,9 @@ SIGNAL_EINSTELLUNGEN = f"{DOMAIN}_geaendert"
 WOCHENTAGE = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 MONATE = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 
+ANSCHLUSS_PUMPE = "pumpe"
+ANSCHLUSS_LEITUNG = "leitung"
+
 BETRIEB_WASSERHAHN = "wasserhahn"
 BETRIEB_BEREGNUNG = "beregnung"
 
