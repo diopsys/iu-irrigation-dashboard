@@ -633,6 +633,17 @@ class BeregnungPanel extends HTMLElement {
         `<circle class="tropfen ${rechts ? 'kurz' : ''}" r="${k === 1 ? 2.4 : 1.9}" style="animation-delay:${(j * 0.17 + k * 0.4).toFixed(2)}s"/>`).join('')}</g>`).join('');
       return `<g class="regner ${aktiv || druck ? 'aktiv' : ''}">${aktiv ? nebel + strahlen : ''}<circle class="duese" cx="${x}" cy="${y}" r="8"/></g>`;
     };
+    // Wasserhahn (Zone im Wasserhahn-Betrieb): Gehäuse am Rohrende, Hebel,
+    // Auslauf nach rechts unten; bei Wasserfluss fallen Tropfen aus dem Auslauf
+    const hahn = (x, y, aktiv, richtung, druck) => {
+      const hebel = richtung === 'rechts'
+        ? '<rect class="hebel" x="-8" y="-15" width="16" height="5" rx="2"/><line x1="0" y1="-10" x2="0" y2="-8"/>'
+        : '<rect class="hebel" x="-19" y="-2.5" width="10" height="5" rx="2"/><line x1="-9" y1="0" x2="-7" y2="0"/>';
+      const tropfen = aktiv ? [0, 1, 2].map((k) => `<circle class="hahn-tropfen" cx="21" cy="8" r="${k === 1 ? 2.4 : 2}" style="animation-delay:${(k * 0.33).toFixed(2)}s"/>`).join('') : '';
+      return `<g class="hahn ${aktiv || druck ? 'aktiv' : ''}" transform="translate(${x} ${y}) scale(${richtung === 'rechts' ? 1.2 : 1.5})">
+        <rect class="koerper" x="-8" y="-8" width="16" height="16" rx="4"/>${hebel}
+        <path class="auslauf" d="M8 -3 H17 Q21 -3 21 1 V5"/>${tropfen}</g>`;
+    };
     const pumpenSymbol = (x, y) => `
       <g class="pumpe ${pumpe ? 'an' : ''} ${pumpt ? 'dreht' : ''}" transform="translate(${x} ${y})">
         <title>${t('Pumpe')} ${pumpeText}</title><circle r="30"/>
@@ -682,7 +693,7 @@ class BeregnungPanel extends HTMLElement {
         s += `<rect x="${x - DX / 2}" y="${oben ? 0 : YM}" width="${DX}" height="${oben ? YM : 400 - YM}" class="treffer"/>`;
         s += `<path d="M${x} ${YM} L${x} ${yE}" class="rohr duenn ${nass ? 'wasser' : ''}"/>`;
         if (stroemt) s += `<path d="M${x} ${YM} L${x} ${yE}" class="fluss duenn"/>`;
-        s += ventil(x, yV, offen[i], 90) + regner(x, yE, stroemt, oben ? 'oben' : 'unten', nass);
+        s += ventil(x, yV, offen[i], 90) + (this._hahnAktiv(z) ? hahn : regner)(x, yE, stroemt, oben ? 'oben' : 'unten', nass);
         const yT = oben ? 22 : 378;
         s += `<text x="${x}" y="${yT}" class="lbl mitte">${esc(z.name)}</text><text x="${x}" y="${oben ? yT + 17 : yT - 20}" class="sub mitte">${zoneInfo(z, i)}</text></g>`;
       });
@@ -701,7 +712,7 @@ class BeregnungPanel extends HTMLElement {
       s += `<g class="zone ${nass ? 'nass' : ''} ${gesperrt(z)}">`;
       s += `<path d="M${XM} ${y} L150 ${y}" class="rohr duenn ${nass ? 'wasser' : ''}"/>`;
       if (stroemt) s += `<path d="M${XM} ${y} L150 ${y}" class="fluss duenn"/>`;
-      s += ventil(105, y, offen[i], 0) + regner(158, y, stroemt, 'rechts', nass);
+      s += ventil(105, y, offen[i], 0) + (this._hahnAktiv(z) ? hahn : regner)(158, y, stroemt, 'rechts', nass);
       s += `<text x="200" y="${y - 3}" class="lbl">${esc(z.name)}</text><text x="200" y="${y + 15}" class="sub">${zoneInfo(z, i)}</text></g>`;
     });
     return s + '</svg>';
@@ -1703,6 +1714,13 @@ main { padding: 1.25rem 2rem 2rem; display: flex; flex-direction: column; gap: 1
 @keyframes nebel { 0%, 100% { opacity: .06; } 50% { opacity: .16; } }
 .regner .tropfen { fill: #7cc4ff; opacity: 0; animation: tropfen 1.2s linear infinite; }
 .regner .tropfen.kurz { animation-name: tropfen-kurz; }
+.hahn .koerper, .hahn .hebel { fill: var(--karte); stroke: var(--rand2); stroke-width: 2; }
+.hahn line { stroke: var(--rand2); stroke-width: 2; }
+.hahn .auslauf { fill: none; stroke: var(--rand2); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.hahn.aktiv .koerper, .hahn.aktiv .hebel { fill: var(--blau); stroke: var(--blau); }
+.hahn.aktiv line, .hahn.aktiv .auslauf { stroke: var(--blau); }
+.hahn .hahn-tropfen { fill: #7cc4ff; opacity: 0; animation: hahn-tropfen 1s ease-in infinite; }
+@keyframes hahn-tropfen { 0% { transform: translateY(0) scale(.6); opacity: 0; } 15% { opacity: 1; } 80% { opacity: .9; } 100% { transform: translateY(16px) scale(1); opacity: 0; } }
 @keyframes tropfen { 0% { transform: translateX(9px) scale(.5); opacity: 0; } 15% { opacity: 1; } 75% { opacity: .8; } 100% { transform: translateX(30px) scale(1.1); opacity: 0; } }
 @keyframes tropfen-kurz { 0% { transform: translateX(9px) scale(.5); opacity: 0; } 15% { opacity: 1; } 75% { opacity: .8; } 100% { transform: translateX(26px) scale(1.1); opacity: 0; } }
 .zone.gesperrt .lbl { fill: var(--text2); }
