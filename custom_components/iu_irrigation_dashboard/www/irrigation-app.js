@@ -27,7 +27,7 @@ const TEXTE = {
   en: {
     // Grundgerüst, Reiter, Kopf
     'Übersicht': 'Overview', 'Automatik': 'Automatic', 'Manuell': 'Manual', 'Wetter': 'Weather', 'Statistik': 'Statistics', 'Einstellungen': 'Settings',
-    'Beregnung': 'Irrigation', 'Menü': 'Menu', 'Lade Beregnung …': 'Loading irrigation …', 'Fehler im Panel: {text}': 'Panel error: {text}',
+    'Beregnung': 'Irrigation', 'Lade Beregnung …': 'Loading irrigation …', 'Fehler im Panel: {text}': 'Panel error: {text}',
     'Fehler: {text}': 'Error: {text}',
     'Das Panel wurde aktualisiert.': 'The panel has been updated.', 'Neu laden': 'Reload',
     'Die Integration „IU Irrigation Dashboard“ ist nicht eingerichtet ({fehler}).': 'The integration “IU Irrigation Dashboard” is not set up ({fehler}).',
@@ -319,8 +319,6 @@ class BeregnungPanel extends HTMLElement {
 
   set narrow(v) {
     this._narrow = v;
-    const b = this.shadowRoot.querySelector('#menu');
-    if (b) b.style.display = v ? '' : 'none';
   }
 
   connectedCallback() {
@@ -454,7 +452,6 @@ class BeregnungPanel extends HTMLElement {
       <style>${STYLE}</style>
       <div class="app">
         <header>
-          <button id="menu" class="menu" title="${t('Menü')}" style="display:${this._narrow ? '' : 'none'}"><ha-icon icon="mdi:menu"></ha-icon></button>
           <button id="logo" class="logo"><ha-icon icon="mdi:sprinkler-variant"></ha-icon><span class="logo-text">${t('Beregnung')}</span></button>
           <nav>${TABS.filter((x) => !x.admin || this._hass?.user?.is_admin).map((x) => `<button class="nav" data-tab="${x.id}"><ha-icon icon="${x.icon}"></ha-icon><span>${t(x.label)}</span></button>`).join('')}</nav>
           <div id="kopfstatus" class="kopfstatus"></div>
@@ -464,9 +461,6 @@ class BeregnungPanel extends HTMLElement {
         <div id="meldung" class="meldung"></div>
       </div>`;
     const root = this.shadowRoot;
-    root.querySelector('#menu').addEventListener('click', () => {
-      this.dispatchEvent(new Event('hass-toggle-menu', { bubbles: true, composed: true }));
-    });
     root.querySelector('#logo').addEventListener('click', () => {
       const ziel = this._cfg?.einstellungen?.anzeige?.logo_link;
       if (!ziel) return;
@@ -1666,8 +1660,6 @@ header {
   background: var(--bg2); border-bottom: 1px solid var(--rand); padding: .75rem 2rem;
   display: flex; align-items: center; gap: 1.5rem; position: sticky; top: 0; z-index: 10;
 }
-.menu { background: none; border: none; color: var(--text2); cursor: pointer; padding: .25rem; margin-left: -.5rem; }
-.menu ha-icon { --mdc-icon-size: 24px; }
 .logo { display: flex; align-items: center; gap: .6rem; font-size: 1.25rem; font-weight: 700; color: var(--blau); background: none; border: 0; padding: 0; font-family: inherit; cursor: default; }
 .logo.link { cursor: pointer; }
 .logo ha-icon { --mdc-icon-size: 26px; }
@@ -1963,7 +1955,11 @@ input[type=range] { width: 100%; accent-color: var(--blau); height: 28px; cursor
   .formular label { flex-wrap: wrap; }
   .anlage-breit { display: none; }
   .anlage-schmal { display: block; }
-  .kopfstatus { margin-left: auto; }
+  /* Handy: Logo und Status in einer Zeile, Status bei Platzmangel seitlich wischbar */
+  .logo { flex-shrink: 0; }
+  .kopfstatus { flex: 1; min-width: 0; flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  .kopfstatus::-webkit-scrollbar { display: none; }
+  .kopfstatus > :first-child { margin-left: auto; }
 }
 @media (max-width: 560px) {
   .logo-text { display: none; }
