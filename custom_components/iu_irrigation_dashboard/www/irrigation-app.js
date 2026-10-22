@@ -87,6 +87,8 @@ const TEXTE = {
     'Regen je Monat (mm)': 'Rain per month (mm)', 'Regen je Tag (mm)': 'Rain per day (mm)', 'Beregnung {dauer}': 'irrigation {dauer}', 'Laufzeit je Zone': 'Run time per zone',
     // Einstellungen
     'nicht gefunden': 'not found', 'Nur für Administratoren.': 'Administrators only.',
+    'Anzeige': 'Display', 'Tippen auf das Logo öffnet': 'Tapping the logo opens', 'Zur Startseite': 'To the start page',
+    'Pfad einer HA-Seite (beginnt mit /) oder eine Adresse mit http(s)://, z. B. die Startseite eines Dashboards. Leer = das Logo hat keine Funktion.': 'Path of an HA page (starting with /) or an http(s):// address, e.g. the start page of a dashboard. Empty = the logo does nothing.',
     'Controller anlegen': 'Add controller', 'Controller': 'Controller', 'Wetter und Wasserbilanz': 'Weather and water balance',
     'Regenzähler (Summe, mm)': 'Rain counter (total, mm)', 'Regenrate (mm/h)': 'Rain rate (mm/h)', 'optional – > 0 = es regnet': 'optional – > 0 = raining',
     'Regensensor (an = Regen)': 'Rain sensor (on = rain)', 'optional': 'optional', 'Wetterprognose': 'Weather forecast', 'Temperatur': 'Temperature',
@@ -453,7 +455,7 @@ class BeregnungPanel extends HTMLElement {
       <div class="app">
         <header>
           <button id="menu" class="menu" title="${t('Menü')}" style="display:${this._narrow ? '' : 'none'}"><ha-icon icon="mdi:menu"></ha-icon></button>
-          <div class="logo"><ha-icon icon="mdi:sprinkler-variant"></ha-icon><span class="logo-text">${t('Beregnung')}</span></div>
+          <button id="logo" class="logo"><ha-icon icon="mdi:sprinkler-variant"></ha-icon><span class="logo-text">${t('Beregnung')}</span></button>
           <nav>${TABS.filter((x) => !x.admin || this._hass?.user?.is_admin).map((x) => `<button class="nav" data-tab="${x.id}"><ha-icon icon="${x.icon}"></ha-icon><span>${t(x.label)}</span></button>`).join('')}</nav>
           <div id="kopfstatus" class="kopfstatus"></div>
         </header>
@@ -464,6 +466,13 @@ class BeregnungPanel extends HTMLElement {
     const root = this.shadowRoot;
     root.querySelector('#menu').addEventListener('click', () => {
       this.dispatchEvent(new Event('hass-toggle-menu', { bubbles: true, composed: true }));
+    });
+    root.querySelector('#logo').addEventListener('click', () => {
+      const ziel = this._cfg?.einstellungen?.anzeige?.logo_link;
+      if (!ziel) return;
+      if (/^https?:\/\//i.test(ziel)) { window.location.href = ziel; return; }
+      history.pushState(null, '', ziel);
+      window.dispatchEvent(new CustomEvent('location-changed', { detail: { replace: false } }));
     });
     root.querySelectorAll('.nav').forEach((b) => b.addEventListener('click', () => {
       this._tab = b.dataset.tab;
@@ -493,6 +502,12 @@ class BeregnungPanel extends HTMLElement {
   _zeichnen() {
     const root = this.shadowRoot;
     root.querySelectorAll('.nav').forEach((b) => b.classList.toggle('aktiv', b.dataset.tab === this._tab));
+    const logo = root.querySelector('#logo');
+    if (logo) {
+      const ziel = this._cfg?.einstellungen?.anzeige?.logo_link;
+      logo.classList.toggle('link', !!ziel);
+      logo.title = ziel ? t('Zur Startseite') : '';
+    }
     const kopf = root.querySelector('#kopfstatus');
     if (kopf) kopf.innerHTML = this._cfg ? this._kopfstatus() : '';
     const inhalt = root.querySelector('#inhalt');
@@ -1249,6 +1264,7 @@ class BeregnungPanel extends HTMLElement {
   _einstellungen() {
     if (!this._hass?.user?.is_admin) return `<section class="karte"><p class="leer">${t('Nur für Administratoren.')}</p></section>`;
     const e = this._entwurfHolen();
+    if (!e.anzeige) e.anzeige = { logo_link: null };
     const wt = e.wetter;
     const ctlKarten = e.controller.map((c, ci) => this._einstCtl(c, ci, e)).join('');
     return `
@@ -1276,6 +1292,13 @@ class BeregnungPanel extends HTMLElement {
           ${wt.strahlung ? '' : `<label>${t('Einstrahlung aus Temperatur (kRs)')}${this._zahlFeld('wetter.krs', wt.krs, 0.05, 0.3, 0.01)}</label>`}
         </div>
         <p class="hinweis">${t('Referenzbedarf = Wassermenge, die eine Zone bei 100 % Standardlaufzeit verteilt (3 mm sind ein guter Startwert). Zonen mit gemessener Beregnungsleistung (mm/h) rechnen mit Leistung × Standardlaufzeit. Ein Regentag über 100 mm gilt als Messfehler.')}${wt.strahlung ? '' : ` ${t('Ohne Einstrahlungssensor wird die Einstrahlung aus der Temperaturspanne des Tages geschätzt (FAO-56): kRs 0,16 im Binnenland, 0,19 an der Küste.')}`}</p>
+      </section>
+      <section class="karte">
+        <div class="kopf"><div><ha-icon icon="mdi:monitor-dashboard"></ha-icon><span>${t('Anzeige')}</span></div></div>
+        <div class="formular breit">
+          <label>${t('Tippen auf das Logo öffnet')}<span class="feld"><input type="text" data-e="anzeige.logo_link" value="${esc(e.anzeige.logo_link || '')}" placeholder="/lovelace/0" spellcheck="false" autocomplete="off"></span></label>
+        </div>
+        <p class="hinweis">${t('Pfad einer HA-Seite (beginnt mit /) oder eine Adresse mit http(s)://, z. B. die Startseite eines Dashboards. Leer = das Logo hat keine Funktion.')}</p>
       </section>
       <section class="karte">
         <div class="kopf"><div><ha-icon icon="mdi:cog-outline"></ha-icon><span>Irrigation Unlimited</span></div></div>
@@ -1645,7 +1668,8 @@ header {
 }
 .menu { background: none; border: none; color: var(--text2); cursor: pointer; padding: .25rem; margin-left: -.5rem; }
 .menu ha-icon { --mdc-icon-size: 24px; }
-.logo { display: flex; align-items: center; gap: .6rem; font-size: 1.25rem; font-weight: 700; color: var(--blau); }
+.logo { display: flex; align-items: center; gap: .6rem; font-size: 1.25rem; font-weight: 700; color: var(--blau); background: none; border: 0; padding: 0; font-family: inherit; cursor: default; }
+.logo.link { cursor: pointer; }
 .logo ha-icon { --mdc-icon-size: 26px; }
 nav { display: flex; gap: .25rem; flex: 1; justify-content: center; overflow-x: auto; scrollbar-width: none; }
 nav::-webkit-scrollbar { display: none; }

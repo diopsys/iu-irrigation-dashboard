@@ -15,6 +15,7 @@ controller[]: id, name, anschluss (pumpe|leitung), pumpe{…, tagbetrieb, stromp
                uhrzeit}, laufzeit}]
 wetter: Quellen, Standort, Wasserbilanz-Parameter, aktiv, grundfaktor
 iu: historie
+anzeige: logo_link (Tippen auf das Logo im Panel öffnet diese Seite; leer = nichts)
 """
 
 from __future__ import annotations
@@ -76,6 +77,7 @@ STANDARD = {
     "controller": [],
     "wetter": STANDARD_WETTER,
     "iu": {"historie": False},
+    "anzeige": {"logo_link": None},
 }
 
 _ID = vol.All(cv.string, vol.Match(r"^[a-z0-9]+$"))
@@ -198,6 +200,11 @@ SCHEMA = vol.Schema(
         vol.Optional("wetter", default={}): WETTER_SCHEMA,
         vol.Optional("iu", default={}): vol.Schema({vol.Optional("historie", default=False): cv.boolean},
                                                    extra=vol.REMOVE_EXTRA),
+        # Ziel beim Tippen auf das Panel-Logo, z. B. die Startseite eines Dashboards
+        vol.Optional("anzeige", default={}): vol.Schema(
+            {vol.Optional("logo_link", default=None): vol.Any(None, vol.All(cv.string, vol.Match(r"^(/|https?://)\S*$")))},
+            extra=vol.REMOVE_EXTRA,
+        ),
     },
     extra=vol.REMOVE_EXTRA,
 )
