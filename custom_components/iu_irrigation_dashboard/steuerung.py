@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -56,7 +55,7 @@ from .const import (
     STORAGE_VERSION,
     WASSERHAHN_AUS_VERZOEGERUNG,
 )
-from . import wasser
+from . import konfig_yaml, wasser
 from .einstellungen import STANDARD, bestand_uebernehmen, laden, pruefen, pumpe_id
 from .iu_yaml import (
     _hhmmss,
@@ -78,7 +77,6 @@ from .wetter import Wasserbilanz
 
 _LOGGER = logging.getLogger(__name__)
 
-_IU_IN_CONFIG_RE = re.compile(r"^irrigation_unlimited\s*:", re.M)
 BERECHNEN_INTERVALL = 1800       # s, Neuberechnung der Laufzeiten
 MIN_ABSTAND_ANWENDEN = 300       # s je Sequenz
 MIN_AENDERUNG_PROZENT = 5        # %-Punkte
@@ -285,12 +283,14 @@ class Beregnung:
 
         geaendert = await hass.async_add_executor_job(schreiben, datei_pfad(hass), als_text(konfig))
         include = await hass.async_add_executor_job(include_vorhanden, hass)
-        konflikt = await hass.async_add_executor_job(self._iu_in_configuration_yaml)
+        konflikt = await hass.async_add_executor_job(
+            konfig_yaml.finden, Path(hass.config.path("configuration.yaml")))
 
         if konflikt:
-            self._issue("iu_konflikt")
+            von, bis = konflikt[1]
+            self._issue("iu_konflikt", fixable=True, von=str(von + 1), bis=str(bis))
             self._status("konflikt", "In configuration.yaml steht noch eine eigene irrigation_unlimited-"
-                         "Konfiguration. Bitte entfernen und HA neu starten.")
+                         "Konfiguration. Unter Einstellungen → Reparaturen auskommentieren lassen.")
             return
         ir.async_delete_issue(hass, DOMAIN, "iu_konflikt")
         if not include:
@@ -318,16 +318,9 @@ class Beregnung:
             await self._durchsetzen()
         self._status("ok", "")
 
-    def _iu_in_configuration_yaml(self) -> bool:
-        try:
-            text = Path(self.hass.config.path("configuration.yaml")).read_text(encoding="utf-8")
-        except OSError:
-            return False
-        return bool(_IU_IN_CONFIG_RE.search(text))
-
-    def _issue(self, key: str) -> None:
-        ir.async_create_issue(self.hass, DOMAIN, key, is_fixable=False, severity=ir.IssueSeverity.WARNING,
-                              translation_key=key, translation_placeholders={"datei": IU_DATEI})
+    def _issue(self, key: str, fixable: bool = False, **platzhalter: str) -> None:
+        ir.async_create_issue(self.hass, DOMAIN, key, is_fixable=fixable, severity=ir.IssueSeverity.WARNING,
+                              translation_key=key, translation_placeholders={"datei": IU_DATEI, **platzhalter})
 
     async def _iu(self, dienst: str, daten: dict[str, Any]) -> None:
         try:

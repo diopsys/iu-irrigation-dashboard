@@ -4,6 +4,10 @@
       "user": {
         "title": "IU Irrigation Dashboard",
         "description": "Sets up the irrigation panel for Irrigation Unlimited. Pumps, valves, zones, sequences and schedules are configured afterwards in the panel under “Settings”. An existing Irrigation Unlimited configuration is imported."
+      },
+      "bestand": {
+        "title": "Existing Irrigation Unlimited configuration found",
+        "description": "configuration.yaml contains its own “irrigation_unlimited:” section (lines {von}–{bis}). Its controllers, zones, sequences and schedules are imported on first start. From then on the configuration is generated in packages/iu_irrigation_dashboard.yaml, so the section has to go. After setup, check the import in the panel under “Settings”; then Settings → Repairs offers to comment the section out (with a backup)."
       }
     },
     "abort": {
@@ -21,7 +25,19 @@
     },
     "iu_konflikt": {
       "title": "IU Irrigation Dashboard: duplicate Irrigation Unlimited configuration",
-      "description": "configuration.yaml still contains its own “irrigation_unlimited:” section. IU Irrigation Dashboard now generates the configuration in {datei}. Please remove the section from configuration.yaml and restart Home Assistant. (The settings were imported from it on first start.)"
+      "description": "configuration.yaml still contains its own “irrigation_unlimited:” section (lines {von}–{bis}). IU Irrigation Dashboard now generates the configuration in {datei} and does not reload Irrigation Unlimited while both exist. The settings were imported from the section on first start – check them in the panel, then click “Submit” to comment the section out.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Comment out the irrigation_unlimited section",
+            "description": "These lines {von}–{bis} of configuration.yaml are prefixed with “#”:\n\n```\n{auszug}\n```\n\nA copy of the file is saved first as configuration.yaml.iu_backup_<date>. The rest of the file stays unchanged. Irrigation Unlimited is then reloaded with {datei}; if it is not loaded yet, a restart is requested."
+          }
+        },
+        "abort": {
+          "geaendert": "configuration.yaml has changed in the meantime. Nothing was modified – please open the repair again.",
+          "nicht_gefunden": "configuration.yaml no longer contains an “irrigation_unlimited:” section."
+        }
+      }
     }
   }
 }

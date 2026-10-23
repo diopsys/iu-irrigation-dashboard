@@ -125,7 +125,7 @@ const TEXTE = {
     'Wird gestoppt': 'Stopping', 'Manueller Lauf gestartet': 'Manual run started', 'Sequenz gestartet': 'Sequence started',
     // Meldungen der Integration (status.meldung)
     'Es ist noch kein Controller angelegt': 'No controller has been set up yet',
-    'In configuration.yaml steht noch eine eigene irrigation_unlimited-Konfiguration. Bitte entfernen und HA neu starten.': 'configuration.yaml still contains its own irrigation_unlimited configuration. Please remove it and restart Home Assistant.',
+    'In configuration.yaml steht noch eine eigene irrigation_unlimited-Konfiguration. Unter Einstellungen → Reparaturen auskommentieren lassen.': 'configuration.yaml still contains its own irrigation_unlimited configuration. Comment it out under Settings → Repairs.',
     'configuration.yaml lädt den Ordner packages/ nicht. Ergänzen: homeassistant: packages: !include_dir_named packages': 'configuration.yaml does not load the packages/ folder. Add: homeassistant: packages: !include_dir_named packages',
     'Irrigation Unlimited ist noch nicht geladen – einmal Home Assistant neu starten.': 'Irrigation Unlimited is not loaded yet – restart Home Assistant once.',
     'Wird nach dem laufenden Lauf übernommen.': 'Will be applied after the current run.',

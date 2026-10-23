@@ -72,7 +72,13 @@ what is running right now.
 - On the first start an existing IU configuration (in `configuration.yaml`
   or a package) is imported: controllers, zones, sequences with durations
   and schedules. Afterwards remove your own IU configuration – the panel
-  shows a warning as long as both exist.
+  shows a warning as long as both exist, and IU is not reloaded. A section
+  `irrigation_unlimited:` directly in `configuration.yaml` is already pointed
+  out during setup; once you have checked the import, Settings → Repairs
+  comments it out for you. It shows the affected lines first, saves a copy
+  as `configuration.yaml.iu_backup_<date>` and changes nothing else in the
+  file (no YAML rewrite, comments and `!include` stay). An IU configuration
+  in a package has to be removed by hand.
 
 ## Requirements
 
