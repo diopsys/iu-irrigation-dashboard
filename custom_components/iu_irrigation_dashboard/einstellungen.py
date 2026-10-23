@@ -202,7 +202,7 @@ SCHEMA = vol.Schema(
                                                    extra=vol.REMOVE_EXTRA),
         # Ziel beim Tippen auf das Panel-Logo, z. B. die Startseite eines Dashboards
         vol.Optional("anzeige", default={}): vol.Schema(
-            {vol.Optional("logo_link", default=None): vol.Any(None, vol.All(cv.string, vol.Match(r"^(/|https?://)\S*$")))},
+            {vol.Optional("logo_link", default=None): vol.Any(None, vol.All(cv.string, vol.Match(r"^(/(?!/)|https?://)\S*$")))},
             extra=vol.REMOVE_EXTRA,
         ),
     },

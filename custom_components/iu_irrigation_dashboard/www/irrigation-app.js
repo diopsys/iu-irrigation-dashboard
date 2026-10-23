@@ -254,6 +254,9 @@ window.addEventListener('unhandledrejection', (e) => {
   if (r && String(r.stack || '').includes('irrigation-app')) fehlerMelden(`Promise: ${r.message || r}`);
 });
 
+// Logo-Ziel: nur HA-Pfade (/…, nicht //…) oder http(s)-Adressen, sonst null (kein Link)
+const logoZiel = (wert) => (typeof wert === 'string' && /^(\/(?!\/)|https?:\/\/)\S*$/i.test(wert.trim()) ? wert.trim() : null);
+
 class BeregnungPanel extends HTMLElement {
   constructor() {
     super();
@@ -462,7 +465,7 @@ class BeregnungPanel extends HTMLElement {
       </div>`;
     const root = this.shadowRoot;
     root.querySelector('#logo').addEventListener('click', () => {
-      const ziel = this._cfg?.einstellungen?.anzeige?.logo_link;
+      const ziel = logoZiel(this._cfg?.einstellungen?.anzeige?.logo_link);
       if (!ziel) return;
       if (/^https?:\/\//i.test(ziel)) { window.location.href = ziel; return; }
       history.pushState(null, '', ziel);
@@ -498,7 +501,7 @@ class BeregnungPanel extends HTMLElement {
     root.querySelectorAll('.nav').forEach((b) => b.classList.toggle('aktiv', b.dataset.tab === this._tab));
     const logo = root.querySelector('#logo');
     if (logo) {
-      const ziel = this._cfg?.einstellungen?.anzeige?.logo_link;
+      const ziel = logoZiel(this._cfg?.einstellungen?.anzeige?.logo_link);
       logo.classList.toggle('link', !!ziel);
       logo.title = ziel ? t('Zur Startseite') : '';
     }

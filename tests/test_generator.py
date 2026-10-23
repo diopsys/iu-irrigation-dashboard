@@ -192,6 +192,8 @@ def main():
         ("Laufzeit über 200 %", lambda d: d["controller"][0]["sequenzen"][0]["plaene"][0].update(laufzeit=250)),
         ("unbekannter Anschluss", lambda d: d["controller"][2].update(anschluss="brunnen")),
         ("negativer Wasserpreis", lambda d: d["controller"][2]["wasser"].update(preis_m3=-1)),
+        ("Logo-Link javascript:", lambda d: d.update(anzeige={"logo_link": "javascript:alert(1)"})),
+        ("Logo-Link //host", lambda d: d.update(anzeige={"logo_link": "//example.org"})),
     ):
         d = copy.deepcopy(daten)
         kaputt(d)
@@ -200,6 +202,10 @@ def main():
             pruefe(f"abgewiesen: {name}", False)
         except vol.Invalid as err:
             pruefe(f"abgewiesen: {name}", True, str(err)[:70])
+    for ziel in ("/local_tunet_dev", "https://example.org/x"):
+        d = copy.deepcopy(daten)
+        d["anzeige"] = {"logo_link": ziel}
+        pruefe(f"Logo-Link erlaubt: {ziel}", ein.pruefen(d)["anzeige"]["logo_link"] == ziel)
     sys.exit(1 if fehler else 0)
 
 
