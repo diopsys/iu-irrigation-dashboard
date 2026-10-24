@@ -298,6 +298,7 @@ class BeregnungPanel extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     try { this._tab = localStorage.getItem('beregnung-tab') || this._tab; } catch (e) { /* egal */ }
     if (!TABS.some((x) => x.id === this._tab)) this._tab = 'uebersicht';
+    this._tabAusAdresse();
     this.shadowRoot.innerHTML = '<div style="min-height:100vh;background:#0a0e1a;color:#8b92a7;font-family:sans-serif;display:flex;align-items:center;justify-content:center">…</div>';
     // Beim Neuladen direkt auf die Panel-Adresse (z. B. Wischen in der iOS-App) setzt HA
     // hass/narrow, bevor dieses Modul geladen ist → hier übernehmen.
@@ -355,6 +356,27 @@ class BeregnungPanel extends HTMLElement {
   connectedCallback() {
     this._ticker = setInterval(() => this._tick(), 1000);
     if (this._hass && !this._abo) this._abonnieren();
+    // HA verwendet das Element beim erneuten Aufruf wieder → Reiter aus der Adresse auch hier
+    if (this._tabAusAdresse() && this._hass) this._zeichnen();
+  }
+
+  // /irrigation?tab=<id> öffnet diesen Reiter (z. B. Tunet-Karte → „uebersicht“).
+  // Der Parameter wird danach aus der Adresse entfernt; true = Reiter gewechselt.
+  _tabAusAdresse() {
+    try {
+      const params = new URLSearchParams(location.search);
+      const wunsch = params.get('tab');
+      if (!wunsch) return false;
+      params.delete('tab');
+      const rest = params.toString();
+      history.replaceState(history.state, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`);
+      if (!TABS.some((x) => x.id === wunsch) || wunsch === this._tab) return false;
+      this._tab = wunsch;
+      try { localStorage.setItem('beregnung-tab', wunsch); } catch (e) { /* egal */ }
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
   disconnectedCallback() {
     clearInterval(this._ticker);
