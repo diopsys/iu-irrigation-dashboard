@@ -13,8 +13,9 @@
   Tagbetrieb (Pumpe Sonnenauf- bis -untergang), Pumpe 30 s nach Laufende aus
 - je Controller am Wasseranschluss mit Zähler: Verbrauch je Zone (wasser.py),
   Durchfluss je Lauf (gemessene Beregnungsleistung)
-- smarte Laufzeit (experimentell, smart.py): Minuten je Zone, Durchgänge,
-  Gutschrift der gemessenen Wassermenge
+- smarte Laufzeit (experimentell, smart.py): Minuten je Zone, Durchgänge;
+  am Wasserzähler wird jede gemeldete Menge sofort gutgeschrieben (übersteht
+  einen Neustart, ein langsamer Zähler wird später verbucht)
 - manueller Ablauf (Zonen nacheinander per manual_run, abbrechbar)
 - Läufe erfassen: Minuten je Zone, Gutschrift in der Bilanz, letzter Lauf
 """
@@ -84,7 +85,7 @@ BERECHNEN_INTERVALL = 1800       # s, Neuberechnung der Laufzeiten
 MIN_ABSTAND_ANWENDEN = 300       # s je Sequenz
 MIN_AENDERUNG_PROZENT = 5        # %-Punkte
 PUMPE_AUS_NACH_LAUF = 30         # s
-MESSUNG_NACH_LAUF = 900          # s – bis dahin hat der Wasserzähler gemeldet
+MESSUNG_NACH_LAUF = 1800         # s – Durchfluss eines Laufs messen (nur Anzeige/Leistung)
 TAGBETRIEB_WIEDER_EIN = 5        # s
 
 # Bedienwerte, die auch Nicht-Admins ändern dürfen (beregnung/aendern)
@@ -537,11 +538,12 @@ class Beregnung:
                 if seg[0] == zone_id and seg[2] is None:
                     seg[2] = dt_util.utcnow()
             if zone and 0 < minuten < 24 * 60:
-                # smarte Laufzeit mit Zähler und Fläche: die gemessene Menge kommt später
-                gemessen = zone_id in self._messung and self._zaehler_gutschrift(zone)
+                # smarte Laufzeit mit Zähler und Fläche: die Menge kommt vom Zähler
+                gemessen = self._zaehler_gutschrift(ctl, zone)
                 self.bilanz.lauf_gutschreiben(zone, minuten, self.daten, gutschrift=not gemessen)
                 if zone_id in self._messung:
                     self._messung[zone_id]["minuten"] += minuten
+                    self._messung[zone_id]["ende"] = dt_util.utcnow()
                     self._planen(f"messung_{zone_id}", MESSUNG_NACH_LAUF,
                                  lambda zid=zone_id: self._messung_abschliessen(zid))
                 self._melden()
@@ -549,26 +551,26 @@ class Beregnung:
                 # IU hat das Ventil nach dem Lauf geschlossen → Hahn ggf. wieder auf
                 self._planen(f"hahn_{ctl['id']}", 5, lambda c=ctl: self._hahn_abgleichen(c))
 
-    def _zaehler_gutschrift(self, zone: dict[str, Any]) -> bool:
-        return smart.aktiv(self.daten) and bool(zone["smart"]["flaeche_m2"])
+    def _zaehler_gutschrift(self, ctl: dict[str, Any] | None, zone: dict[str, Any] | None) -> bool:
+        """Schreibt der Wasserzähler die Menge dieser Zone gut (statt der Minuten)?"""
+        return bool(smart.aktiv(self.daten) and ctl and zone and wasser_zaehler(ctl) and zone["smart"]["flaeche_m2"])
 
     async def _messung_abschliessen(self, zone_id: str) -> None:
-        """Lauf (alle Durchgänge) gemessen: Durchfluss speichern, bei der
-        smarten Laufzeit die Menge (Liter ÷ Fläche) gutschreiben."""
+        """Lauf (alle Durchgänge) gemessen: Durchfluss speichern. Hat der
+        Zähler seit dem Lauf gar nicht gemeldet, die Menge aus den Minuten
+        gutschreiben – sonst ist sie schon mit den Zählerständen verbucht."""
         messung = self._messung.pop(zone_id, None)
-        _ctl, zone = self._ctl_der_zone(zone_id)
+        ctl, zone = self._ctl_der_zone(zone_id)
         if not messung or not zone:
             return
         liter = self.bilanz.daten["wasser_l"].get(zone_id, 0.0) - messung["start_l"]
         self.bilanz.durchfluss_messen(zone_id, liter, messung["minuten"])
-        if self._zaehler_gutschrift(zone):
-            if liter > 0:
-                self.bilanz.wasser_gutschreiben(zone, liter / zone["smart"]["flaeche_m2"], self.daten)
-            else:
-                # Zähler hat nichts geliefert: wie ohne Zähler aus den Minuten
-                self.bilanz.wasser_gutschreiben(zone, smart.gutschrift_mm(
-                    zone, messung["minuten"], self.daten["wetter"], self.bilanz.daten["durchfluss"].get(zone_id)),
-                    self.daten)
+        zaehler = self.hass.states.get(wasser_zaehler(ctl) or "")
+        gemeldet = zaehler is not None and (getattr(zaehler, "last_reported", None) or zaehler.last_updated) >= messung.get(
+            "ende", dt_util.utcnow())
+        if self._zaehler_gutschrift(ctl, zone) and liter <= 0 and not gemeldet:
+            self.bilanz.wasser_gutschreiben(zone, smart.gutschrift_mm(
+                zone, messung["minuten"], self.daten["wetter"], self.bilanz.daten["durchfluss"].get(zone_id)), self.daten)
         self._melden()
 
     def _zaehler_geaendert(self, zaehler: str, alt: Any, neu: Any) -> None:
@@ -589,6 +591,10 @@ class Beregnung:
             for zone_id, liter in verteilt.items():
                 summe = self.bilanz.daten["wasser_l"]
                 summe[zone_id] = round(summe.get(zone_id, 0.0) + liter, 2)
+                # smarte Laufzeit: sofort gutschreiben (Liter ÷ Fläche = mm)
+                ctl, zone = self._ctl_der_zone(zone_id)
+                if self._zaehler_gutschrift(ctl, zone):
+                    self.bilanz.wasser_gutschreiben(zone, liter / zone["smart"]["flaeche_m2"], self.daten)
             if verteilt:
                 self.bilanz.speichern()
                 self._melden()

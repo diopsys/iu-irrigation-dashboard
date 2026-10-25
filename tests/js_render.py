@@ -73,7 +73,7 @@ def mit_smart(daten):
 
 def cfg(daten, laeuft):
     if smart.aktiv(daten):
-        zonen = {z["id"]: smart.planen(z, -12.0 + i, 3.0, 0, False, daten["wetter"], [2.0, 2.1, 1.9])
+        zonen = {z["id"]: smart.planen(z, -12.0 + i, 0, False, daten["wetter"], [2.0, 2.1, 1.9])
                  for i, z in enumerate(z for c in daten["controller"] for z in c["zonen"])}
     else:
         zonen = {z["id"]: {"bilanz": -3.2, "bedarf": 4.1, "referenz": 3.0, "faktor": 1.35}

@@ -76,16 +76,17 @@ what is running right now.
   in steps of 5 %. A zone at 0 % is skipped. While it rains (rain rate > 0
   or rain sensor on) zones with rain are skipped. The run times are applied
   to IU with `adjust_time` every 30 minutes, not during a run.
-- **Smart run time (experimental):** the daily balance uses Kc × ET₀ and
-  the zone's own storage. Demand = deficit + Kc × ET₀ of the next 24 h −
-  effective rain; minutes = demand ÷ application rate (mm/h), at most the
-  maximum run time, times plan % and base factor. In *deep watering* mode a
-  zone is skipped until its deficit reaches the threshold (% of its
-  storage). With cycle & soak a zone appears up to four times in the IU
+- **Smart run time (experimental):** soil model as in FAO-56 – balance 0 =
+  soil full (more drains away), the deficit counts from full and reaches at
+  most the zone's storage. Daily − Kc × ET₀ + effective rain. Demand = what
+  is missing after the expected rain (today and forecast); minutes = demand
+  ÷ application rate (mm/h), at most the maximum run time, times plan % and
+  base factor. In *deep watering* mode a zone is skipped until its deficit
+  reaches the threshold (% of its storage) and then filled up. With cycle & soak a zone appears up to four times in the IU
   sequence (first all first cycles, then the second ones …), optionally
-  with a soak pause. With a water meter and an area, the measured amount
-  of a run (litres ÷ m²) is credited, and the median flow of the last runs
-  gives the measured application rate.
+  with a soak pause. With a water meter and an area, every measured amount
+  (litres ÷ m²) is credited as soon as the meter reports it, and the median
+  flow of the last runs gives the measured application rate.
 - On the first start an existing IU configuration (in `configuration.yaml`
   or a package) is imported: controllers, zones, sequences with durations
   and schedules. Afterwards remove your own IU configuration – the panel
