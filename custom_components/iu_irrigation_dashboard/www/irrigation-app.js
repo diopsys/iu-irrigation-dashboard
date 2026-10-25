@@ -589,6 +589,8 @@ class BeregnungPanel extends HTMLElement {
       statistik: () => this._statistik(),
       einstellungen: () => this._einstellungen(),
     }[this._tab] || (() => this._uebersicht());
+    const app = root.querySelector('.app');
+    if (app) app.dataset.tab = this._tab;
     try {
       if (this._veraltet) {
         inhalt.innerHTML = `<section class="karte"><p class="leer">${t('Das Panel wurde aktualisiert.')}<br><br><button class="knopf blau" data-aktion="neu-laden"><ha-icon icon="mdi:refresh"></ha-icon>${t('Neu laden')}</button></p></section>`;
@@ -845,7 +847,7 @@ class BeregnungPanel extends HTMLElement {
       const lauf = this._aktuellerLauf(c);
       const haehne = c.zonen.filter((z) => z.wasserhahn);
       return `
-        <section class="karte">
+        <section class="karte schema-karte">
           <div class="kopf"><div><ha-icon icon="mdi:pipe-valve"></ha-icon><span>${esc(c.name)}</span></div>${lauf ? '<span class="live-badge">LIVE</span>' : ''}</div>
           ${c.zonen.length ? `<div class="anlage-breit">${this._anlage(c, false)}</div><div class="anlage-schmal">${this._anlage(c, true)}</div>` : `<p class="leer">${t('Keine Zonen.')}</p>`}
           ${lauf ? this._laufBox(lauf) : ''}
@@ -2107,6 +2109,24 @@ input[type=range] { width: 100%; accent-color: var(--blau); height: 28px; cursor
   .hbar { grid-template-columns: 110px 1fr 70px; gap: .5rem; }
   .info-raster { gap: .75rem; padding: .75rem; }
   .zonen-raster { grid-template-columns: repeat(2, 1fr); }
+}
+/* Querformat (Wandtablet 1024 × 768, PC): Übersicht passt auf einen Bildschirm –
+   Kacheln in einer Reihe, das Anlagenbild bekommt die restliche Höhe */
+@media (min-width: 871px) and (orientation: landscape) {
+  .app[data-tab="uebersicht"] { height: 100vh; min-height: 0; }
+  .app[data-tab="uebersicht"] main { flex: 1; min-height: 0; overflow-y: auto; padding-top: .9rem; padding-bottom: .9rem; gap: .75rem; }
+  .app[data-tab="uebersicht"] main > * { flex-shrink: 0; }
+  .app[data-tab="uebersicht"] .kacheln { grid-template-columns: repeat(4, 1fr); gap: .75rem; }
+  .app[data-tab="uebersicht"] .kachel { padding: .7rem .9rem; }
+  .app[data-tab="uebersicht"] .kachel-wert { font-size: 1.35rem; }
+  .app[data-tab="uebersicht"] .kachel .sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .app[data-tab="uebersicht"] .karte { padding: .9rem 1rem; }
+  .app[data-tab="uebersicht"] .kopf { margin-bottom: .5rem; }
+  .app[data-tab="uebersicht"] .schema-karte { flex: 1 1 0; min-height: 300px; display: flex; flex-direction: column; }
+  .app[data-tab="uebersicht"] .schema-karte .anlage-breit { flex: 1; min-height: 0; position: relative; }
+  .app[data-tab="uebersicht"] .schema-karte .anlage-breit .anlage { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .app[data-tab="uebersicht"] .laufbox, .app[data-tab="uebersicht"] .zeile-knoepfe { margin-top: .6rem; }
+  .app[data-tab="uebersicht"] .zeile-knoepfe .knopfgruppe.senkrecht { flex-direction: row; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; }
 }
 
 /* Etappe 2: Controller, Sequenzen, Pläne, Wetter */
