@@ -26,7 +26,7 @@ const ZONENTYPEN = {
 const ZONENTYP_TEXT = { benutzerdefiniert: 'Benutzerdefiniert', rasen: 'Rasen', beet: 'Beet/Stauden', hecke: 'Hecke/Sträucher', gemuese: 'Gemüse/Kübel' };
 const SMART_STANDARD = { typ: 'benutzerdefiniert', kc: 1, speicher_mm: null, giessweise: 'bedarf', schwelle_prozent: 50, flaeche_m2: null,
   leistung_quelle: 'hand', durchfluss_l_min: null, max_min: 120, aufteilen: false, durchgang_min: 30, sickerpause_min: 0 };
-const GRUND_TEXT = { laeuft: 'nach Bedarf', begrenzt: 'auf Höchstlaufzeit begrenzt', unter_schwelle: 'Defizit unter der Schwelle', kein_bedarf: 'kein Bedarf', regnet: 'es regnet' };
+const GRUND_TEXT = { laeuft: 'nach Bedarf', begrenzt: 'auf Höchstlaufzeit begrenzt', kein_bedarf: 'kein Bedarf', regnet: 'es regnet' };
 const QUELLE_TEXT = { zaehler: 'gemessen', durchfluss: 'Durchfluss ÷ Fläche', hand: 'von Hand', referenz: 'Referenzmenge' };
 // Liter je Einheit eines Wasserzählers (wie wasser.py)
 const LITER_JE = { L: 1, l: 1, 'm³': 1000, m3: 1000, gal: 3.785411784, 'ft³': 28.316846592, ft3: 28.316846592, CCF: 2831.6846592 };
@@ -158,7 +158,7 @@ const TEXTE = {
     'Smarte Laufzeit': 'Smart run time', 'experimentell': 'experimental', 'Smarte Laufzeit je Zone verwenden': 'Use smart run time per zone',
     'Jede Zone bekommt Zonentyp, Pflanzenfaktor (Kc), eigenen Bodenspeicher, Gießweise (täglich oder tief ab Schwelle) und Beregnungsleistung (von Hand, aus Durchfluss und Fläche oder gemessen mit dem Wasserzähler). Die Laufzeit wird in Minuten berechnet und kann in Durchgänge aufgeteilt werden. Noch nicht in einer ganzen Saison erprobt. Aus = Verhalten wie bisher.':
       'Every zone gets a zone type, crop coefficient (Kc), its own soil storage, a watering mode (daily or deep from a threshold) and an application rate (manual, from flow and area or measured with the water meter). The run time is calculated in minutes and can be split into cycles. Not yet tested over a whole season. Off = behaviour as before.',
-    'smart': 'smart', 'nach Bedarf': 'as needed', 'auf Höchstlaufzeit begrenzt': 'limited to the maximum run time', 'Defizit unter der Schwelle': 'deficit below the threshold',
+    'smart': 'smart', 'nach Bedarf': 'as needed', 'auf Höchstlaufzeit begrenzt': 'limited to the maximum run time', 'Boden feucht genug (fehlt {fehlt} von {schwelle} mm)': 'soil moist enough ({fehlt} of {schwelle} mm missing)',
     'kein Bedarf': 'no demand', 'Rasen': 'Lawn', 'Beet/Stauden': 'Beds/perennials', 'Hecke/Sträucher': 'Hedge/shrubs', 'Gemüse/Kübel': 'Vegetables/pots', 'Benutzerdefiniert': 'Custom',
     'von {mm} mm': 'of {mm} mm', 'Referenzmenge': 'reference amount', 'Durchfluss ÷ Fläche': 'flow ÷ area', 'von Hand': 'manual', 'Schwelle': 'Threshold', 'Leistung': 'Rate',
     'Smarte Laufzeit: Bilanz je Zone mit Pflanzenfaktor (Kc × ET₀) und eigenem Bodenspeicher. Bedarf = Defizit + Kc × Verdunstung der nächsten 24 h − wirksamer Regen. „Tief gießen“ läuft erst, wenn das Defizit die Schwelle erreicht. Laufzeit = Bedarf ÷ Beregnungsleistung, höchstens die Höchstlaufzeit; dazu kommen Plan-% und Grundfaktor. Mit Wasserzähler und Fläche wird die gemessene Menge gutgeschrieben.':
@@ -432,6 +432,12 @@ class BeregnungPanel extends HTMLElement {
     const lmin = s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
     const fl = z.smart?.flaeche_m2;
     return esc(t('gemessen: {lmin} L/min aus {n} Läufen', { lmin: fmt(lmin, 1), n: m.length })) + (fl ? ` = ${fmt((lmin * 60) / fl, 1)} mm/h` : '');
+  }
+  // Grund der smarten Laufzeit; unter der Schwelle mit den Zahlen
+  _grundText(d) {
+    if (!d?.grund) return '';
+    if (d.grund === 'unter_schwelle') return t('Boden feucht genug (fehlt {fehlt} von {schwelle} mm)', { fehlt: fmt(d.defizit, 1), schwelle: fmt(d.schwelle, 1) });
+    return t(GRUND_TEXT[d.grund] || '');
   }
   _wasserKosten(ctl, liter) {
     const w = ctl.wasser || {};
@@ -907,7 +913,7 @@ class BeregnungPanel extends HTMLElement {
           <label class="schalter"><input type="checkbox" data-seqzone="${esc(s.id)}|${esc(z.id)}" ${sz.aktiv ? 'checked' : ''}><span></span></label>
           <div class="zone-name">${esc(z.name)}${aktiv ? ` <span class="live-badge">${t('LÄUFT')}</span>` : ''}</div>
           <label class="zone-wert"><span class="sub">${t('Dauer')}</span><span class="min-feld"><input type="number" min="1" max="240" step="1" value="${sz.dauer_min ?? ''}" placeholder="${z.standard_min}" data-seqdauer="${esc(s.id)}|${esc(z.id)}" aria-label="${esc(t('Dauer {name}', { name: z.name }))}">min</span></label>
-          <div class="zone-wert geplant"><span class="sub">${t('Geplant')}</span>${an ? (sl.aktiv ? `${fmtMin(geplant)} <span class="sub">${smartInfo}</span>` : `<span class="sub">${t(sl.smart && GRUND_TEXT[sl.grund] ? GRUND_TEXT[sl.grund] : 'entfällt')}</span>`) : '–'}</div>
+          <div class="zone-wert geplant"><span class="sub">${t('Geplant')}</span>${an ? (sl.aktiv ? `${fmtMin(geplant)} <span class="sub">${smartInfo}</span>` : `<span class="sub">${esc((sl.smart && this._grundText({ ...((this._z().wetter || {}).zonen || {})[z.id], grund: sl.grund })) || t('entfällt'))}</span>`) : '–'}</div>
         </div>`;
     }).join('');
     const haehne = s.zonen.map((sz) => c.zonen.find((x) => x.id === sz.zone)).filter((z) => z && this._hahnAktiv(z));
@@ -1021,7 +1027,7 @@ class BeregnungPanel extends HTMLElement {
           <td class="r">${fmt(d.leistung, 1)} mm/h<div class="sub">${esc(t(QUELLE_TEXT[d.quelle] || ''))}</div></td>
           <td class="r"><b>${d.minuten ? fmtMin(d.minuten) : '–'}</b>${d.durchgaenge > 1 ? `<div class="sub">${d.durchgaenge} × ${fmtMin(d.minuten / d.durchgaenge)}</div>` : ''}</td>
           <td class="r">${d.minuten ? (d.liter != null ? `${fmt(d.liter)} L${kosten != null ? `<div class="sub">${fmt(kosten, 2)} €</div>` : ''}` : `${fmt(d.mm, 1)} mm`) : '–'}</td>
-          <td><span class="sub">${esc(t(GRUND_TEXT[d.grund] || ''))}</span></td></tr>`;
+          <td><span class="sub">${esc(this._grundText(d))}</span></td></tr>`;
       }
       return `<tr><td>${esc(z.name)}${this._ctlListe().length > 1 ? ` <span class="sub">${esc(z.ctl.name)}</span>` : ''}</td>
         <td class="r">${fmt(d.bilanz, 1)} mm</td><td class="r">${fmt(d.bedarf, 1)} mm</td><td class="r">${fmt(d.referenz, 1)} mm</td>
