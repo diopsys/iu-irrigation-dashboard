@@ -9,8 +9,8 @@ Faktor der Zone (0 … max):
     Faktor = Bedarf / R,  R = Beregnungsleistung × Standardzeit oder Referenz
 Regenmengen über 100 mm/Tag gelten als Messfehler (Zählersprung).
 Mit der smarten Laufzeit (experimentell, smart.py) je Zone mit Kc, eigenem
-Speicher und Laufzeit in Minuten; ein Lauf mit Wasserzähler schreibt die
-gemessene Menge (Liter ÷ Fläche) gut.
+Speicher (0 = voll, −S = leer) und Laufzeit in Minuten; am Wasserzähler wird
+jede gemeldete Menge sofort gutgeschrieben (Liter ÷ Fläche).
 
 Laufdaten (Bilanz, verarbeitete Tage, Zähler, letzte Läufe) liegen in
 .storage/beregnung.laufdaten.
@@ -191,11 +191,14 @@ class Wasserbilanz:
         mit_smart = smart.aktiv(einstellungen)
         for ctl in einstellungen["controller"]:
             for zone in ctl["zonen"]:
-                kc = zone["smart"]["kc"] if mit_smart else 1.0
-                speicher = smart.speicher(zone, wetter) if mit_smart else wetter["speicher_mm"]
                 b = self.daten["bilanz"].get(zone["id"], 0.0)
-                b += (wirksam * werte["regen"] if zone["regen"] else 0.0) - kc * et0_tag
-                self.daten["bilanz"][zone["id"]] = round(max(BILANZ_MIN, min(speicher, b)), 2)
+                regen = wirksam * werte["regen"] if zone["regen"] else 0.0
+                if mit_smart:
+                    # 0 = Boden voll, mehr versickert; höchstens der Speicher fehlt
+                    b = smart.bilanz_begrenzen(b + regen - zone["smart"]["kc"] * et0_tag, zone, wetter)
+                else:
+                    b = max(BILANZ_MIN, min(wetter["speicher_mm"], b + regen - et0_tag))
+                self.daten["bilanz"][zone["id"]] = round(b, 2)
 
     def lauf_gutschreiben(self, zone: dict[str, Any], minuten: float, einstellungen: dict[str, Any],
                           gutschrift: bool = True) -> None:
@@ -219,9 +222,12 @@ class Wasserbilanz:
 
     def _gutschreiben(self, zone: dict[str, Any], mm: float, einstellungen: dict[str, Any]) -> None:
         wetter = einstellungen["wetter"]
-        speicher = smart.speicher(zone, wetter) if smart.aktiv(einstellungen) else wetter["speicher_mm"]
         b = self.daten["bilanz"].get(zone["id"], 0.0) + mm
-        self.daten["bilanz"][zone["id"]] = round(min(speicher, b), 2)
+        if smart.aktiv(einstellungen):
+            b = smart.bilanz_begrenzen(b, zone, wetter)
+        else:
+            b = min(wetter["speicher_mm"], b)
+        self.daten["bilanz"][zone["id"]] = round(b, 2)
 
     def durchfluss_messen(self, zone_id: str, liter: float, minuten: float) -> None:
         """Durchfluss eines Laufs (L/min) für die gemessene Beregnungsleistung."""
@@ -278,7 +284,7 @@ class Wasserbilanz:
                 b = self.daten["bilanz"].get(zone["id"], 0.0)
                 if mit_smart:
                     faktoren[zone["id"]] = smart.planen(
-                        zone, b, et0_prog, regen_heute + prognose.get("regen", 0.0), regnet, wetter,
+                        zone, b, regen_heute + prognose.get("regen", 0.0), regnet, wetter,
                         self.daten["durchfluss"].get(zone["id"]))
                     continue
                 regen = wirksam * (regen_heute + prognose.get("regen", 0.0)) if zone["regen"] else 0.0

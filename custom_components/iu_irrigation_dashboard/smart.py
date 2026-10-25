@@ -1,13 +1,15 @@
 """Smarte Laufzeit je Zone (experimentell, Schalter smart.aktiv).
 
 Ohne den Schalter bleibt alles wie bisher. Mit ihm rechnet jede Zone mit
-eigenem Pflanzenfaktor und Bodenspeicher und bekommt eine Laufzeit in
-Minuten statt eines Faktors:
+eigenem Pflanzenfaktor und Bodenspeicher S und bekommt eine Laufzeit in
+Minuten statt eines Faktors. Bodenmodell wie FAO-56: Bilanz B = 0 ist der
+volle Boden (Feldkapazität), mehr versickert; das Defizit D = −B zählt ab
+voll und kann höchstens S erreichen (mehr hält der Boden nicht):
 
-    Bilanz B (mm) täglich:  B ← min(S, B + wirksam × Regen − Kc × ET₀)
-    Bedarf = −B + Kc × ET₀(Prognose 24 h) − wirksam × Regen(heute + Prognose)
+    Bilanz täglich:         B ← clamp(B + wirksam × Regen − Kc × ET₀, −S, 0)
+    Bedarf = D − wirksam × Regen(heute + Prognose)   (was nach dem Regen fehlt)
     Gießweise „bedarf“:     läuft, sobald Bedarf > 0
-    Gießweise „schwelle“:   läuft erst ab Defizit −B ≥ Schwelle % × S
+    Gießweise „schwelle“:   läuft erst ab D ≥ Schwelle % × S und füllt bis voll auf
     Minuten = Bedarf ÷ Beregnungsleistung (mm/h) × 60, höchstens max_min
     Durchgänge = ⌈Minuten ÷ durchgang_min⌉ (Aufteilen), höchstens MAX_DURCHGAENGE
 
@@ -78,7 +80,12 @@ def durchgaenge_max(zone: dict[str, Any]) -> int:
     return max(1, min(MAX_DURCHGAENGE, math.ceil(sm["max_min"] / max(1, sm["durchgang_min"]))))
 
 
-def planen(zone: dict[str, Any], bilanz: float, et0_prognose: float, regen_mm: float, regnet: bool,
+def bilanz_begrenzen(bilanz: float, zone: dict[str, Any], wetter: dict[str, Any]) -> float:
+    """Bilanz zwischen −S (Boden leer) und 0 (Boden voll, mehr versickert)."""
+    return max(-speicher(zone, wetter), min(0.0, bilanz))
+
+
+def planen(zone: dict[str, Any], bilanz: float, regen_mm: float, regnet: bool,
            wetter: dict[str, Any], messungen: list[float] | None = None) -> dict[str, Any]:
     """Laufzeit einer Zone für den nächsten Lauf.
 
@@ -88,9 +95,9 @@ def planen(zone: dict[str, Any], bilanz: float, et0_prognose: float, regen_mm: f
     kc = sm["kc"]
     wirksam = wetter["regen_wirksam"] / 100
     regen = wirksam * regen_mm if zone["regen"] else 0.0
-    defizit = max(0.0, -bilanz)
+    defizit = -bilanz_begrenzen(bilanz, zone, wetter)
     schwelle = s * sm["schwelle_prozent"] / 100 if sm["giessweise"] == "schwelle" else 0.0
-    bedarf = -bilanz + kc * et0_prognose - regen
+    bedarf = defizit - regen
     l, quelle = leistung(zone, messungen)
     if l is None:
         # ohne Angabe: Referenzmenge in der Standardlaufzeit
@@ -100,10 +107,10 @@ def planen(zone: dict[str, Any], bilanz: float, et0_prognose: float, regen_mm: f
     minuten = 0.0
     if zone["regen"] and regnet:
         grund = "regnet"
-    elif defizit < schwelle:
-        grund = "unter_schwelle"
-    elif bedarf <= 0:
-        grund = "kein_bedarf"
+    elif defizit <= 0 or defizit < schwelle:
+        grund = "unter_schwelle" if schwelle else "kein_bedarf"
+    elif bedarf <= 0 or bedarf < schwelle:
+        grund = "regen_deckt"
     else:
         minuten = bedarf / l * 60
         grund = "laeuft"
