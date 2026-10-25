@@ -38,6 +38,13 @@ what is running right now.
   whenever the pump runs and the zone is left out of the automatic run;
   switch it to irrigation mode (e.g. while on holiday) and it runs in its
   sequences again. Optionally the pump stays on from sunrise to sunset.
+- **Smart run time (experimental, off by default):** per zone a zone type
+  (lawn, beds, hedge, vegetables/pots) with crop coefficient (Kc), its own
+  soil storage, watering mode (daily as needed, or deep watering once the
+  deficit reaches a threshold), application rate (manual, from flow and
+  area, or measured with the water meter), maximum run time and optional
+  cycle & soak. The run time is calculated in minutes. Not yet tested over
+  a whole season – with the switch off everything behaves as before.
 - **Languages:** German and English, following the Home Assistant language.
 
 ## How it works
@@ -69,6 +76,16 @@ what is running right now.
   in steps of 5 %. A zone at 0 % is skipped. While it rains (rain rate > 0
   or rain sensor on) zones with rain are skipped. The run times are applied
   to IU with `adjust_time` every 30 minutes, not during a run.
+- **Smart run time (experimental):** the daily balance uses Kc × ET₀ and
+  the zone's own storage. Demand = deficit + Kc × ET₀ of the next 24 h −
+  effective rain; minutes = demand ÷ application rate (mm/h), at most the
+  maximum run time, times plan % and base factor. In *deep watering* mode a
+  zone is skipped until its deficit reaches the threshold (% of its
+  storage). With cycle & soak a zone appears up to four times in the IU
+  sequence (first all first cycles, then the second ones …), optionally
+  with a soak pause. With a water meter and an area, the measured amount
+  of a run (litres ÷ m²) is credited, and the median flow of the last runs
+  gives the measured application rate.
 - On the first start an existing IU configuration (in `configuration.yaml`
   or a package) is imported: controllers, zones, sequences with durations
   and schedules. Afterwards remove your own IU configuration – the panel
@@ -167,6 +184,13 @@ zeigt, was gerade läuft.
   Verbrauch während der Läufe) oder eigener Gartenzähler – sowie Grundpreis
   je Monat, Preis je m³ und unter „Erweitert“ Abwasser je m³. Die Statistik
   zeigt dann Wasser je Tag/Monat und Zone sowie die Kosten.
+- **Smarte Laufzeit (experimentell, standardmäßig aus):** je Zone Zonentyp
+  (Rasen, Beet, Hecke, Gemüse/Kübel) mit Pflanzenfaktor (Kc), eigenem
+  Bodenspeicher, Gießweise (täglich nach Bedarf oder tief ab Schwelle),
+  Beregnungsleistung (von Hand, aus Durchfluss und Fläche oder gemessen mit
+  dem Wasserzähler), Höchstlaufzeit und optional Aufteilen in Durchgänge
+  (Cycle & Soak). Die Laufzeit wird in Minuten berechnet. Noch nicht über
+  eine ganze Saison erprobt – ausgeschaltet bleibt alles wie bisher.
 - **Wasserhahn-Betrieb:** Eine Zone kann ein Wasserhahn sein – das Ventil
   ist offen, solange die Pumpe läuft, und die Zone fehlt in der Automatik.
   Auf „Beregnung“ umgestellt (z. B. im Urlaub) läuft sie wieder mit.

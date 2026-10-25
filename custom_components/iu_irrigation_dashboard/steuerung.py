@@ -11,7 +11,10 @@
   erst ab 5 %-Punkten Unterschied (Schutz vor Rückkopplung)
 - je Controller mit Pumpe: Wasserhahn-Betrieb (Ventil folgt der Pumpe),
   Tagbetrieb (Pumpe Sonnenauf- bis -untergang), Pumpe 30 s nach Laufende aus
-- je Controller am Wasseranschluss mit Zähler: Verbrauch je Zone (wasser.py)
+- je Controller am Wasseranschluss mit Zähler: Verbrauch je Zone (wasser.py),
+  Durchfluss je Lauf (gemessene Beregnungsleistung)
+- smarte Laufzeit (experimentell, smart.py): Minuten je Zone, Durchgänge,
+  Gutschrift der gemessenen Wassermenge
 - manueller Ablauf (Zonen nacheinander per manual_run, abbrechbar)
 - Läufe erfassen: Minuten je Zone, Gutschrift in der Bilanz, letzter Lauf
 """
@@ -55,7 +58,7 @@ from .const import (
     STORAGE_VERSION,
     WASSERHAHN_AUS_VERZOEGERUNG,
 )
-from . import konfig_yaml, wasser
+from . import konfig_yaml, smart, wasser
 from .einstellungen import STANDARD, bestand_uebernehmen, laden, pruefen, pumpe_id
 from .iu_yaml import (
     _hhmmss,
@@ -81,6 +84,7 @@ BERECHNEN_INTERVALL = 1800       # s, Neuberechnung der Laufzeiten
 MIN_ABSTAND_ANWENDEN = 300       # s je Sequenz
 MIN_AENDERUNG_PROZENT = 5        # %-Punkte
 PUMPE_AUS_NACH_LAUF = 30         # s
+MESSUNG_NACH_LAUF = 900          # s – bis dahin hat der Wasserzähler gemeldet
 TAGBETRIEB_WIEDER_EIN = 5        # s
 
 # Bedienwerte, die auch Nicht-Admins ändern dürfen (beregnung/aendern)
@@ -118,6 +122,8 @@ class Beregnung:
         self._zonen_start: dict[str, datetime] = {}
         # je Wasserzähler: [[zone_id, start, ende | None], …] (wasser.verteilen)
         self._wasser_segmente: dict[str, list[list]] = {}
+        # je Zone: Liter beim Start und gelaufene Minuten bis zum Abschluss der Messung
+        self._messung: dict[str, dict[str, float]] = {}
         self._timer: dict[str, Callable] = {}
         self._beobachter: list[Callable] = []
         self._dauerhaft: list[Callable] = []
@@ -177,6 +183,7 @@ class Beregnung:
         self.zustand["wetter"] = self.bilanz.aktuell
         self.zustand["minuten"] = self.bilanz.daten["minuten"]
         self.zustand["wasser_l"] = self.bilanz.daten["wasser_l"]
+        self.zustand["durchfluss"] = self.bilanz.daten["durchfluss"]
         self.zustand["laeufe"] = self.bilanz.daten["laeufe"]
         self.zustand["anzahl"] = self.bilanz.daten["anzahl"]
         self.zustand["manuell"] = self._manuell_info
@@ -341,8 +348,9 @@ class Beregnung:
             for seq in iu_sequenzen(ctl):
                 entity = zu["sequenzen"].get(seq["id"])
                 if entity and hass.states.get(entity) is not None:
+                    anzahl = len(smart.iu_eintraege(ctl, seq, smart.aktiv(self.daten)))
                     await self._iu("adjust_time", {"entity_id": entity, "reset": None,
-                                                   "zones": list(range(1, len(seq["zonen"]) + 1))})
+                                                   "zones": list(range(1, anzahl + 1))})
                     await self._iu("adjust_time", {"entity_id": entity, "reset": None})
                     # Aussetzen nutzt die Integration nicht (0 % = Zone aus);
                     # eine alte Aussetzung (frühere Regenautomation) aufheben
@@ -379,26 +387,43 @@ class Beregnung:
         return next((p for p in seq["plaene"] if monat in p["monate"]), None)
 
     def soll_prozente(self) -> dict[str, dict[str, Any]]:
-        """Je Sequenz: Plan und je Sequenzzone (aktiv, %)."""
+        """Je Sequenz: Plan, je Sequenzzone (aktiv, %, Minuten) und je Eintrag
+        der IU-Sequenz [nr, aktiv, %] (mit Aufteilen mehrere je Zone)."""
         wetter = self.daten["wetter"]
+        mit_smart = smart.aktiv(self.daten)
         faktoren = (self.bilanz.aktuell or {}).get("zonen", {})
         erg: dict[str, dict[str, Any]] = {}
         for ctl in iu_controller(self.daten):
             for seq in iu_sequenzen(ctl):
                 plan = self._plan(seq)
                 plan_pct = plan["laufzeit"] if plan else 100
-                zonen = {}
-                for nr, sz in enumerate(seq["zonen"], start=1):
+                nach_wetter = wetter["aktiv"] and seq["wetter"]
+                zonen: dict[str, dict[str, Any]] = {}
+                eintraege: list[list] = []
+                for nr, (sz, runde) in enumerate(smart.iu_eintraege(ctl, seq, mit_smart), start=1):
                     zone = zone_nach_id(ctl, sz["zone"])
-                    f = 1.0
-                    if wetter["aktiv"] and seq["wetter"] and zone and sz["zone"] in faktoren:
-                        f = faktoren[sz["zone"]]["faktor"]
-                    pct = f * plan_pct * wetter["grundfaktor"] * (zone["faktor"] if zone else 100) / 1e4
-                    pct = int(round(pct / 5) * 5)
-                    zonen[sz["zone"]] = {"nr": nr, "prozent": pct,
-                                         "aktiv": seq_zone_aktiv(ctl, sz) and pct > 0,
-                                         "minuten": round(seq_zone_dauer(ctl, sz) * pct / 100, 1)}
-                erg[seq["id"]] = {"plan": plan["name"] if plan else None, "plan_prozent": plan_pct, "zonen": zonen}
+                    dauer = seq_zone_dauer(ctl, sz)
+                    zp = faktoren.get(sz["zone"], {})
+                    if mit_smart and nach_wetter and zone and zp.get("smart"):
+                        # smarte Laufzeit: Minuten der Zone × Plan-% × Grundfaktor, auf die Durchgänge verteilt
+                        n = zp["durchgaenge"]
+                        minuten = zp["minuten"] * plan_pct * wetter["grundfaktor"] / 1e4
+                        pct = int(round(minuten / n / dauer * 100)) if n and runde < n else 0
+                        info = {"smart": True, "durchgaenge": n if minuten > 0 else 0, "grund": zp["grund"]}
+                    else:
+                        f = zp.get("faktor", 1.0) if nach_wetter and zone and "faktor" in zp else 1.0
+                        zonenfaktor = 100 if mit_smart or not zone else zone["faktor"]
+                        pct = f * plan_pct * wetter["grundfaktor"] * zonenfaktor / 1e4
+                        pct = int(round(pct / 5) * 5) if runde == 0 else 0
+                        minuten = dauer * pct / 100
+                        info = {}
+                    aktiv = seq_zone_aktiv(ctl, sz) and pct > 0
+                    eintraege.append([nr, aktiv, pct])
+                    if runde == 0:
+                        zonen[sz["zone"]] = {"nr": nr, "prozent": pct, "aktiv": aktiv,
+                                             "minuten": round(minuten, 1), **info}
+                erg[seq["id"]] = {"plan": plan["name"] if plan else None, "plan_prozent": plan_pct,
+                                  "zonen": zonen, "eintraege": eintraege}
         return erg
 
     async def async_berechnen(self, erzwingen: bool = False) -> None:
@@ -423,7 +448,7 @@ class Beregnung:
             entity = zu["sequenzen"].get(seq_id)
             if not entity or self.hass.states.get(entity) is None or _an(self.hass, entity):
                 continue
-            neu = {z["nr"]: (z["aktiv"], z["prozent"]) for z in s["zonen"].values()}
+            neu = {nr: (a, p) for nr, a, p in s["eintraege"]}
             alt = self._angewendet.get(seq_id)
             if alt is not None and not erzwingen:
                 if jetzt - self._angewendet_zeit.get(seq_id, 0) < MIN_ABSTAND_ANWENDEN:
@@ -500,6 +525,11 @@ class Beregnung:
             self._zonen_start[zone_id] = dt_util.utcnow()
             if segmente is not None:
                 segmente.append([zone_id, dt_util.utcnow(), None])
+                # Messung über alle Durchgänge, bis die Zone 15 min aus ist
+                if f"messung_{zone_id}" in self._timer:
+                    self._timer.pop(f"messung_{zone_id}")()
+                self._messung.setdefault(zone_id, {"start_l": self.bilanz.daten["wasser_l"].get(zone_id, 0.0),
+                                                   "minuten": 0.0})
         elif alt is not None and alt.state == "on" and neu.state != "on":
             start = self._zonen_start.pop(zone_id, alt.last_changed)
             minuten = (dt_util.utcnow() - start).total_seconds() / 60
@@ -507,11 +537,39 @@ class Beregnung:
                 if seg[0] == zone_id and seg[2] is None:
                     seg[2] = dt_util.utcnow()
             if zone and 0 < minuten < 24 * 60:
-                self.bilanz.lauf_gutschreiben(zone, minuten, self.daten)
+                # smarte Laufzeit mit Zähler und Fläche: die gemessene Menge kommt später
+                gemessen = zone_id in self._messung and self._zaehler_gutschrift(zone)
+                self.bilanz.lauf_gutschreiben(zone, minuten, self.daten, gutschrift=not gemessen)
+                if zone_id in self._messung:
+                    self._messung[zone_id]["minuten"] += minuten
+                    self._planen(f"messung_{zone_id}", MESSUNG_NACH_LAUF,
+                                 lambda zid=zone_id: self._messung_abschliessen(zid))
                 self._melden()
             if ctl and zone and zone["wasserhahn"]:
                 # IU hat das Ventil nach dem Lauf geschlossen → Hahn ggf. wieder auf
                 self._planen(f"hahn_{ctl['id']}", 5, lambda c=ctl: self._hahn_abgleichen(c))
+
+    def _zaehler_gutschrift(self, zone: dict[str, Any]) -> bool:
+        return smart.aktiv(self.daten) and bool(zone["smart"]["flaeche_m2"])
+
+    async def _messung_abschliessen(self, zone_id: str) -> None:
+        """Lauf (alle Durchgänge) gemessen: Durchfluss speichern, bei der
+        smarten Laufzeit die Menge (Liter ÷ Fläche) gutschreiben."""
+        messung = self._messung.pop(zone_id, None)
+        _ctl, zone = self._ctl_der_zone(zone_id)
+        if not messung or not zone:
+            return
+        liter = self.bilanz.daten["wasser_l"].get(zone_id, 0.0) - messung["start_l"]
+        self.bilanz.durchfluss_messen(zone_id, liter, messung["minuten"])
+        if self._zaehler_gutschrift(zone):
+            if liter > 0:
+                self.bilanz.wasser_gutschreiben(zone, liter / zone["smart"]["flaeche_m2"], self.daten)
+            else:
+                # Zähler hat nichts geliefert: wie ohne Zähler aus den Minuten
+                self.bilanz.wasser_gutschreiben(zone, smart.gutschrift_mm(
+                    zone, messung["minuten"], self.daten["wetter"], self.bilanz.daten["durchfluss"].get(zone_id)),
+                    self.daten)
+        self._melden()
 
     def _zaehler_geaendert(self, zaehler: str, alt: Any, neu: Any) -> None:
         """Neuer Zählerstand → Menge seit der letzten Meldung auf die Zonen

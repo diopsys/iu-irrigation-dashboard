@@ -15,7 +15,8 @@ from datetime import datetime, timedelta
 from beispiel import STAMM, beispiel
 from py_mini_racer import MiniRacer
 
-from custom_components.iu_irrigation_dashboard import iu_yaml
+from custom_components.iu_irrigation_dashboard import einstellungen as ein
+from custom_components.iu_irrigation_dashboard import iu_yaml, smart
 
 APP = STAMM / "custom_components/iu_irrigation_dashboard/www/irrigation-app.js"
 
@@ -58,9 +59,25 @@ def zustaende(daten, laeuft):
     return {s["entity_id"]: s for s in st}
 
 
+def mit_smart(daten):
+    """Beispielanlage mit smarter Laufzeit (experimentell)."""
+    roh = json.loads(json.dumps(daten))
+    roh["smart"] = {"aktiv": True}
+    typen = ["rasen", "beet", "hecke", "gemuese", "benutzerdefiniert"]
+    for i, z in enumerate(z for c in roh["controller"] for z in c["zonen"]):
+        z["smart"] = {"typ": typen[i % len(typen)], **(smart.ZONENTYPEN[typen[i % len(typen)]] or {}),
+                      "flaeche_m2": 40 + i, "leistung_quelle": ["hand", "durchfluss", "zaehler"][i % 3],
+                      "durchfluss_l_min": 8.5, "aufteilen": i % 2 == 0, "durchgang_min": 20, "sickerpause_min": 5}
+    return ein.pruefen(roh)
+
+
 def cfg(daten, laeuft):
-    zonen = {z["id"]: {"bilanz": -3.2, "bedarf": 4.1, "referenz": 3.0, "faktor": 1.35}
-             for c in daten["controller"] for z in c["zonen"]}
+    if smart.aktiv(daten):
+        zonen = {z["id"]: smart.planen(z, -12.0 + i, 3.0, 0, False, daten["wetter"], [2.0, 2.1, 1.9])
+                 for i, z in enumerate(z for c in daten["controller"] for z in c["zonen"])}
+    else:
+        zonen = {z["id"]: {"bilanz": -3.2, "bedarf": 4.1, "referenz": 3.0, "faktor": 1.35}
+                 for c in daten["controller"] for z in c["zonen"]}
     return {
         "einstellungen": daten,
         "status": {"iu": "ok", "meldung": "", "datei": "packages/iu_irrigation_dashboard.yaml", "zuletzt": None, "app": "test"},
@@ -71,11 +88,15 @@ def cfg(daten, laeuft):
                        "prognose_stunden": [["2026-07-20T%02d:00:00+02:00" % h, h % 3 * 0.4, 60] for h in range(24)],
                        "zonen": zonen},
             "sequenzen": {s["id"]: {"plan": s["plaene"][0]["name"] if s["plaene"] else None, "plan_prozent": 100,
-                                    "zonen": {sz["zone"]: {"nr": k + 1, "prozent": 85, "aktiv": True, "minuten": 17}
+                                    "zonen": {sz["zone"]: {"nr": k + 1, "prozent": 85, "aktiv": zonen[sz["zone"]].get("minuten", 1) > 0,
+                                                           "minuten": zonen[sz["zone"]].get("minuten", 17),
+                                                           **({"smart": True, "durchgaenge": zonen[sz["zone"]]["durchgaenge"],
+                                                               "grund": zonen[sz["zone"]]["grund"]} if smart.aktiv(daten) else {})}
                                               for k, sz in enumerate(s["zonen"])}}
                           for c in daten["controller"] for s in c["sequenzen"]},
             "laeufe": {"s1": {"start": "2026-07-15T05:15:00+02:00", "ende": "2026-07-15T06:00:00+02:00", "dauer_min": 45, "plan": "Summer"}},
             "manuell": {"c2": {"zone": "front"}} if laeuft else {}, "minuten": {}, "anzahl": {"automatik": 12, "manuell": 3},
+            "durchfluss": {"pots": [2.0, 2.2, 1.9, 2.1], "herbs": [1.5]},
         },
     }
 
@@ -110,13 +131,13 @@ REITER = ["_uebersicht", "_automatik", "_manuell", "_wetter", "_statistik", "_ei
 
 
 def main():
-    daten = beispiel()
     ctx = MiniRacer()
     ctx.eval(STUBS)
     ctx.eval(APP.read_text(encoding="utf-8"))
     fehler = 0
-    for sprache in ("de", "en"):
-        for laeuft in (False, True):
+    for sprache, laeuft, daten in [(s, l, d) for d in (beispiel(), mit_smart(beispiel()))
+                                   for s in ("de", "en") for l in (False, True)]:
+        if True:
             ctx.eval(f"""
 var p = new __Panel();
 p._spracheAus({{ language: '{sprache}' }});
@@ -125,7 +146,7 @@ p._hass = {{ states: {json.dumps(zustaende(daten, laeuft))}, user: {{ is_admin: 
             connection: {{ subscribeMessage() {{ return Promise.resolve(() => {{}}); }} }} }};
 p._cfg = {json.dumps(cfg(daten, laeuft))};
 {STATISTIK}""")
-            print(f"── {sprache}, {'Lauf' if laeuft else 'Ruhe'}")
+            print(f"── {sprache}, {'Lauf' if laeuft else 'Ruhe'}{', smart' if smart.aktiv(daten) else ''}")
             for reiter in REITER:
                 try:
                     laenge = ctx.eval(f"p.{reiter}().length")

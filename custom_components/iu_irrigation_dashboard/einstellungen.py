@@ -13,7 +13,11 @@ controller[]: id, name, anschluss (pumpe|leitung), pumpe{…, tagbetrieb, stromp
   sequenzen[]: id, name, pause_s, wetter, zonen[{zone, dauer_min, aktiv}],
                plaene[{key, name, monate, tage, zeit{bezug, versatz_min,
                uhrzeit}, laufzeit}]
+  zonen[].smart: typ, kc, speicher_mm, giessweise, schwelle_prozent,
+               flaeche_m2, leistung_quelle, durchfluss_l_min, max_min,
+               aufteilen, durchgang_min, sickerpause_min (smart.py)
 wetter: Quellen, Standort, Wasserbilanz-Parameter, aktiv, grundfaktor
+smart: aktiv (smarte Laufzeit je Zone, experimentell)
 iu: historie
 anzeige: logo_link (Tippen auf das Logo im Panel öffnet diese Seite; leer = nichts)
 """
@@ -32,6 +36,7 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
+from .smart import ZONENTYPEN
 from .const import (
     ANSCHLUSS_LEITUNG,
     ANSCHLUSS_PUMPE,
@@ -78,6 +83,7 @@ STANDARD = {
     "wetter": STANDARD_WETTER,
     "iu": {"historie": False},
     "anzeige": {"logo_link": None},
+    "smart": {"aktiv": False},
 }
 
 _ID = vol.All(cv.string, vol.Match(r"^[a-z0-9]+$"))
@@ -122,6 +128,26 @@ SEQUENZ_SCHEMA = vol.Schema(
     }
 )
 
+_MM = vol.All(vol.Coerce(float), vol.Range(min=0.1, max=100000))
+
+# Smarte Laufzeit je Zone (nur mit smart.aktiv); Standard = Verhalten wie bisher
+SMART_ZONE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("typ", default="benutzerdefiniert"): vol.In(list(ZONENTYPEN)),
+        vol.Optional("kc", default=1.0): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=1.5)),
+        vol.Optional("speicher_mm", default=None): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=1, max=100))),
+        vol.Optional("giessweise", default="bedarf"): vol.In(["bedarf", "schwelle"]),
+        vol.Optional("schwelle_prozent", default=50): vol.All(vol.Coerce(int), vol.Range(min=10, max=90)),
+        vol.Optional("flaeche_m2", default=None): vol.Any(None, _MM),
+        vol.Optional("leistung_quelle", default="hand"): vol.In(["hand", "durchfluss", "zaehler"]),
+        vol.Optional("durchfluss_l_min", default=None): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.1, max=1000))),
+        vol.Optional("max_min", default=120): vol.All(vol.Coerce(int), vol.Range(min=1, max=240)),
+        vol.Optional("aufteilen", default=False): cv.boolean,
+        vol.Optional("durchgang_min", default=30): vol.All(vol.Coerce(int), vol.Range(min=1, max=240)),
+        vol.Optional("sickerpause_min", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=120)),
+    }
+)
+
 ZONE_SCHEMA = vol.Schema(
     {
         vol.Required("id"): _ID,
@@ -133,6 +159,7 @@ ZONE_SCHEMA = vol.Schema(
         vol.Optional("regen", default=True): cv.boolean,
         vol.Optional("faktor", default=100): vol.All(vol.Coerce(int), vol.Range(min=0, max=300)),
         vol.Optional("leistung_mm_h", default=None): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.1, max=200))),
+        vol.Optional("smart", default={}): SMART_ZONE_SCHEMA,
     }
 )
 
@@ -205,6 +232,8 @@ SCHEMA = vol.Schema(
             {vol.Optional("logo_link", default=None): vol.Any(None, vol.All(cv.string, vol.Match(r"^(/(?!/)|https?://)\S*$")))},
             extra=vol.REMOVE_EXTRA,
         ),
+        vol.Optional("smart", default={}): vol.Schema({vol.Optional("aktiv", default=False): cv.boolean},
+                                                      extra=vol.REMOVE_EXTRA),
     },
     extra=vol.REMOVE_EXTRA,
 )
