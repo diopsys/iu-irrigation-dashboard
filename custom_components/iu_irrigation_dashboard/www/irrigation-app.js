@@ -15,6 +15,19 @@ const IST_AN = ['on', 'open', 'opening'];
 const SCHALT_DOMAINS = ['switch', 'input_boolean', 'valve', 'cover', 'light'];
 const MONATE_IU = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const TAGE_IU = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+// Smarte Laufzeit (experimentell, wie smart.py): Voreinstellungen je Zonentyp
+const ZONENTYPEN = {
+  benutzerdefiniert: null,
+  rasen: { kc: 0.8, speicher_mm: 20, giessweise: 'schwelle', schwelle_prozent: 50 },
+  beet: { kc: 0.6, speicher_mm: 15, giessweise: 'schwelle', schwelle_prozent: 50 },
+  hecke: { kc: 0.5, speicher_mm: 30, giessweise: 'schwelle', schwelle_prozent: 60 },
+  gemuese: { kc: 1.0, speicher_mm: 10, giessweise: 'bedarf', schwelle_prozent: 30 },
+};
+const ZONENTYP_TEXT = { benutzerdefiniert: 'Benutzerdefiniert', rasen: 'Rasen', beet: 'Beet/Stauden', hecke: 'Hecke/Sträucher', gemuese: 'Gemüse/Kübel' };
+const SMART_STANDARD = { typ: 'benutzerdefiniert', kc: 1, speicher_mm: null, giessweise: 'bedarf', schwelle_prozent: 50, flaeche_m2: null,
+  leistung_quelle: 'hand', durchfluss_l_min: null, max_min: 120, aufteilen: false, durchgang_min: 30, sickerpause_min: 0 };
+const GRUND_TEXT = { laeuft: 'nach Bedarf', begrenzt: 'auf Höchstlaufzeit begrenzt', kein_bedarf: 'kein Bedarf', regnet: 'es regnet' };
+const QUELLE_TEXT = { zaehler: 'gemessen', durchfluss: 'Durchfluss ÷ Fläche', hand: 'von Hand', referenz: 'Referenzmenge' };
 // Liter je Einheit eines Wasserzählers (wie wasser.py)
 const LITER_JE = { L: 1, l: 1, 'm³': 1000, m3: 1000, gal: 3.785411784, 'ft³': 28.316846592, ft3: 28.316846592, CCF: 2831.6846592 };
 
@@ -141,6 +154,21 @@ const TEXTE = {
     // Statistik: Wasser, Strom, Kosten
     '{l} Liter': '{l} litres', 'Kosten': 'Costs', 'Wasser {eur}': 'water {eur}', 'Abwasser {eur}': 'wastewater {eur}', 'Grundpreis {eur}': 'base price {eur}', 'Strom {eur}': 'electricity {eur}', 'Strom': 'Electricity',
     'Wasser je Tag (L)': 'Water per day (L)', 'Wasser je Monat (L)': 'Water per month (L)', 'Strom je Tag (kWh)': 'Electricity per day (kWh)', 'Strom je Monat (kWh)': 'Electricity per month (kWh)',
+    // Smarte Laufzeit (experimentell)
+    'Smarte Laufzeit': 'Smart run time', 'experimentell': 'experimental', 'Smarte Laufzeit je Zone verwenden': 'Use smart run time per zone',
+    'Jede Zone bekommt Zonentyp, Pflanzenfaktor (Kc), eigenen Bodenspeicher, Gießweise (täglich oder tief ab Schwelle) und Beregnungsleistung (von Hand, aus Durchfluss und Fläche oder gemessen mit dem Wasserzähler). Die Laufzeit wird in Minuten berechnet und kann in Durchgänge aufgeteilt werden. Noch nicht in einer ganzen Saison erprobt. Aus = Verhalten wie bisher.':
+      'Every zone gets a zone type, crop coefficient (Kc), its own soil storage, a watering mode (daily or deep from a threshold) and an application rate (manual, from flow and area or measured with the water meter). The run time is calculated in minutes and can be split into cycles. Not yet tested over a whole season. Off = behaviour as before.',
+    'smart': 'smart', 'nach Bedarf': 'as needed', 'auf Höchstlaufzeit begrenzt': 'limited to the maximum run time', 'Boden feucht genug (fehlt {fehlt} von {schwelle} mm)': 'soil moist enough ({fehlt} of {schwelle} mm missing)',
+    'kein Bedarf': 'no demand', 'Rasen': 'Lawn', 'Beet/Stauden': 'Beds/perennials', 'Hecke/Sträucher': 'Hedge/shrubs', 'Gemüse/Kübel': 'Vegetables/pots', 'Benutzerdefiniert': 'Custom',
+    'von {mm} mm': 'of {mm} mm', 'Referenzmenge': 'reference amount', 'Durchfluss ÷ Fläche': 'flow ÷ area', 'von Hand': 'manual', 'Schwelle': 'Threshold', 'Leistung': 'Rate',
+    'Smarte Laufzeit: Bilanz je Zone mit Pflanzenfaktor (Kc × ET₀) und eigenem Bodenspeicher. Bedarf = Defizit + Kc × Verdunstung der nächsten 24 h − wirksamer Regen. „Tief gießen“ läuft erst, wenn das Defizit die Schwelle erreicht. Laufzeit = Bedarf ÷ Beregnungsleistung, höchstens die Höchstlaufzeit; dazu kommen Plan-% und Grundfaktor. Mit Wasserzähler und Fläche wird die gemessene Menge gutgeschrieben.':
+      'Smart run time: balance per zone with crop coefficient (Kc × ET₀) and its own soil storage. Demand = deficit + Kc × evaporation of the next 24 h − effective rain. “Deep watering” only runs once the deficit reaches the threshold. Run time = demand ÷ application rate, at most the maximum run time; plan % and base factor are applied on top. With a water meter and an area the measured amount is credited.',
+    'Zonentyp': 'Zone type', 'Pflanzenfaktor (Kc)': 'Crop coefficient (Kc)', 'Fläche': 'Area', 'Gießweise': 'Watering mode', 'täglich nach Bedarf': 'daily as needed',
+    'tief gießen ab Schwelle': 'deep watering from a threshold', 'Schwelle (Defizit)': 'Threshold (deficit)', 'von Hand (mm/h)': 'manual (mm/h)',
+    'aus Durchfluss und Fläche': 'from flow and area', 'gemessen mit dem Wasserzähler': 'measured with the water meter', 'Höchstlaufzeit': 'Maximum run time',
+    'In Durchgänge aufteilen (Cycle & Soak)': 'Split into cycles (cycle & soak)', 'Höchstens je Durchgang': 'At most per cycle', 'Sickerpause nach Durchgang': 'Soak pause after a cycle',
+    'Durchfluss': 'Flow', 'Durchfluss (Startwert)': 'Flow (initial value)', 'gemessen: {lmin} L/min aus {n} Läufen': 'measured: {lmin} L/min from {n} runs',
+    '{n} von 3 Läufen gemessen': '{n} of 3 runs measured',
     'Kosten je Tag (€)': 'Costs per day (€)', 'Kosten je Monat (€)': 'Costs per month (€)', 'Laufzeit und Wasser je Zone': 'Run time and water per zone',
   },
 };
@@ -394,6 +422,28 @@ class BeregnungPanel extends HTMLElement {
 
   _hahnAktiv(z) { return z.wasserhahn && z.betrieb === 'wasserhahn'; }
   _leitung(ctl) { return ctl?.anschluss === 'leitung'; }
+  _smart() { return !!this._e().smart?.aktiv; }
+  // gemessener Durchfluss einer Zone (Median der letzten 5 Läufe, ab 3)
+  _messungText(z) {
+    const m = ((this._z().durchfluss || {})[z.id] || []).slice(-5).filter((x) => x > 0);
+    if (!m.length) return '';
+    if (m.length < 3) return esc(t('{n} von 3 Läufen gemessen', { n: m.length }));
+    const s = [...m].sort((a, b) => a - b);
+    const lmin = s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+    const fl = z.smart?.flaeche_m2;
+    return esc(t('gemessen: {lmin} L/min aus {n} Läufen', { lmin: fmt(lmin, 1), n: m.length })) + (fl ? ` = ${fmt((lmin * 60) / fl, 1)} mm/h` : '');
+  }
+  // Grund der smarten Laufzeit; unter der Schwelle mit den Zahlen
+  _grundText(d) {
+    if (!d?.grund) return '';
+    if (d.grund === 'unter_schwelle') return t('Boden feucht genug (fehlt {fehlt} von {schwelle} mm)', { fehlt: fmt(d.defizit, 1), schwelle: fmt(d.schwelle, 1) });
+    return t(GRUND_TEXT[d.grund] || '');
+  }
+  _wasserKosten(ctl, liter) {
+    const w = ctl.wasser || {};
+    const preis = (w.preis_m3 || 0) + (w.abwasser_m3 || 0);
+    return this._leitung(ctl) && liter != null && preis ? (liter / 1000) * preis : null;
+  }
   _ventilOffen(z) { return z.ventile.some((v) => this._offen(v)) || this._an(this._zu().zonen[z.id]); }
   _inAutomatik(ctl, z) {
     return !this._hahnAktiv(z) && (ctl.sequenzen || []).some((s) => s.zonen.some((sz) => sz.zone === z.id && sz.aktiv));
@@ -854,7 +904,8 @@ class BeregnungPanel extends HTMLElement {
       const sl = soll.zonen[sz.zone] || {};
       const dauer = sz.dauer_min || z.standard_min;
       const an = sz.aktiv;
-      const geplant = an && sl.aktiv ? (dauer * (sl.prozent ?? 100)) / 100 : 0;
+      const geplant = an && sl.aktiv ? (sl.smart ? sl.minuten : (dauer * (sl.prozent ?? 100)) / 100) : 0;
+      const smartInfo = sl.smart ? (sl.durchgaenge > 1 ? `${sl.durchgaenge} × ${fmtMin(geplant / sl.durchgaenge)}` : t('smart')) : `${sl.prozent} %`;
       summe += geplant;
       const aktiv = lauf && lauf.zoneId === z.id && this._an(e);
       return `
@@ -862,7 +913,7 @@ class BeregnungPanel extends HTMLElement {
           <label class="schalter"><input type="checkbox" data-seqzone="${esc(s.id)}|${esc(z.id)}" ${sz.aktiv ? 'checked' : ''}><span></span></label>
           <div class="zone-name">${esc(z.name)}${aktiv ? ` <span class="live-badge">${t('LÄUFT')}</span>` : ''}</div>
           <label class="zone-wert"><span class="sub">${t('Dauer')}</span><span class="min-feld"><input type="number" min="1" max="240" step="1" value="${sz.dauer_min ?? ''}" placeholder="${z.standard_min}" data-seqdauer="${esc(s.id)}|${esc(z.id)}" aria-label="${esc(t('Dauer {name}', { name: z.name }))}">min</span></label>
-          <div class="zone-wert geplant"><span class="sub">${t('Geplant')}</span>${an ? (sl.aktiv ? `${fmtMin(geplant)} <span class="sub">${sl.prozent} %</span>` : `<span class="sub">${t('entfällt')}</span>`) : '–'}</div>
+          <div class="zone-wert geplant"><span class="sub">${t('Geplant')}</span>${an ? (sl.aktiv ? `${fmtMin(geplant)} <span class="sub">${smartInfo}</span>` : `<span class="sub">${esc((sl.smart && this._grundText({ ...((this._z().wetter || {}).zonen || {})[z.id], grund: sl.grund })) || t('entfällt'))}</span>`) : '–'}</div>
         </div>`;
     }).join('');
     const haehne = s.zonen.map((sz) => c.zonen.find((x) => x.id === sz.zone)).filter((z) => z && this._hahnAktiv(z));
@@ -965,8 +1016,19 @@ class BeregnungPanel extends HTMLElement {
     const wt = this._e().wetter;
     const tage = w.tage || [];
     const zonen = this._ctlListe().flatMap((c) => c.zonen.map((z) => ({ ...z, ctl: c })));
+    const smartAn = this._smart();
     const zeilen = zonen.map((z) => {
       const d = (w.zonen || {})[z.id] || {};
+      if (smartAn && d.smart) {
+        const kosten = this._wasserKosten(z.ctl, d.liter);
+        return `<tr><td>${esc(z.name)}<div class="sub">${esc(t(ZONENTYP_TEXT[z.smart?.typ] || ''))} · Kc ${fmt(d.kc, 2)}</div></td>
+          <td class="r">${fmt(d.bilanz, 1)} mm<div class="sub">${t('von {mm} mm', { mm: fmt(d.speicher) })}</div></td>
+          <td class="r">${d.schwelle ? `${fmt(d.schwelle, 1)} mm` : '–'}</td><td class="r">${fmt(d.bedarf, 1)} mm</td>
+          <td class="r">${fmt(d.leistung, 1)} mm/h<div class="sub">${esc(t(QUELLE_TEXT[d.quelle] || ''))}</div></td>
+          <td class="r"><b>${d.minuten ? fmtMin(d.minuten) : '–'}</b>${d.durchgaenge > 1 ? `<div class="sub">${d.durchgaenge} × ${fmtMin(d.minuten / d.durchgaenge)}</div>` : ''}</td>
+          <td class="r">${d.minuten ? (d.liter != null ? `${fmt(d.liter)} L${kosten != null ? `<div class="sub">${fmt(kosten, 2)} €</div>` : ''}` : `${fmt(d.mm, 1)} mm`) : '–'}</td>
+          <td><span class="sub">${esc(this._grundText(d))}</span></td></tr>`;
+      }
       return `<tr><td>${esc(z.name)}${this._ctlListe().length > 1 ? ` <span class="sub">${esc(z.ctl.name)}</span>` : ''}</td>
         <td class="r">${fmt(d.bilanz, 1)} mm</td><td class="r">${fmt(d.bedarf, 1)} mm</td><td class="r">${fmt(d.referenz, 1)} mm</td>
         <td class="r"><b>${d.faktor != null ? fmt(d.faktor * 100) : '–'} %</b></td><td>${z.regen ? '' : `<span class="sub">${t('ohne Regen')}</span>`}</td></tr>`;
@@ -989,8 +1051,10 @@ class BeregnungPanel extends HTMLElement {
       </section>
       <section class="karte">
         <div class="kopf"><div><ha-icon icon="mdi:water-percent"></ha-icon><span>${t('Bodenspeicher je Zone')}</span></div><span class="sub">${t('Referenz {referenz} mm = 100 % · Speicher {speicher} mm · Regen {wirksam} % wirksam', { referenz: fmt(wt.referenz_mm, 1), speicher: fmt(wt.speicher_mm), wirksam: wt.regen_wirksam })}</span></div>
-        <table class="tabelle"><tr><th>${t('Zone')}</th><th class="r">${t('Bilanz')}</th><th class="r">${t('Bedarf')}</th><th class="r">${t('Referenz')}</th><th class="r">${t('Faktor')}</th><th></th></tr>${zeilen}</table>
-        <p class="hinweis">${esc(t('Bilanz < 0 = Defizit im Boden. Bedarf = Defizit + Verdunstung der nächsten 24 h − wirksamer Regen (heute und Prognose). Faktor = Bedarf ÷ Referenz, höchstens {max} %; dazu kommen Plan-%, Grundfaktor und Zonenfaktor. Jeder Lauf schreibt seine Wassermenge gut.', { max: wt.max_faktor }))}</p>
+        ${smartAn ? `<div class="tabelle-scroll"><table class="tabelle"><tr><th>${t('Zone')}</th><th class="r">${t('Bilanz')}</th><th class="r">${t('Schwelle')}</th><th class="r">${t('Bedarf')}</th><th class="r">${t('Leistung')}</th><th class="r">${t('Geplant')}</th><th class="r">${t('Wasser')}</th><th></th></tr>${zeilen}</table></div>
+        <p class="hinweis"><span class="badge-exp">${t('experimentell')}</span> ${esc(t('Smarte Laufzeit: Bilanz je Zone mit Pflanzenfaktor (Kc × ET₀) und eigenem Bodenspeicher. Bedarf = Defizit + Kc × Verdunstung der nächsten 24 h − wirksamer Regen. „Tief gießen“ läuft erst, wenn das Defizit die Schwelle erreicht. Laufzeit = Bedarf ÷ Beregnungsleistung, höchstens die Höchstlaufzeit; dazu kommen Plan-% und Grundfaktor. Mit Wasserzähler und Fläche wird die gemessene Menge gutgeschrieben.'))}</p>`
+          : `<table class="tabelle"><tr><th>${t('Zone')}</th><th class="r">${t('Bilanz')}</th><th class="r">${t('Bedarf')}</th><th class="r">${t('Referenz')}</th><th class="r">${t('Faktor')}</th><th></th></tr>${zeilen}</table>
+        <p class="hinweis">${esc(t('Bilanz < 0 = Defizit im Boden. Bedarf = Defizit + Verdunstung der nächsten 24 h − wirksamer Regen (heute und Prognose). Faktor = Bedarf ÷ Referenz, höchstens {max} %; dazu kommen Plan-%, Grundfaktor und Zonenfaktor. Jeder Lauf schreibt seine Wassermenge gut.', { max: wt.max_faktor }))}</p>`}
       </section>`;
   }
 
@@ -1291,6 +1355,11 @@ class BeregnungPanel extends HTMLElement {
         <p class="hinweis">${t('Referenzbedarf = Wassermenge, die eine Zone bei 100 % Standardlaufzeit verteilt (3 mm sind ein guter Startwert). Zonen mit gemessener Beregnungsleistung (mm/h) rechnen mit Leistung × Standardlaufzeit. Ein Regentag über 100 mm gilt als Messfehler.')}${wt.strahlung ? '' : ` ${t('Ohne Einstrahlungssensor wird die Einstrahlung aus der Temperaturspanne des Tages geschätzt (FAO-56): kRs 0,16 im Binnenland, 0,19 an der Küste.')}`}</p>
       </section>
       <section class="karte">
+        <div class="kopf"><div><ha-icon icon="mdi:brain"></ha-icon><span>${t('Smarte Laufzeit')}</span><span class="badge-exp">${t('experimentell')}</span></div></div>
+        <label class="schalter"><input type="checkbox" data-e="smart.aktiv" data-zeichnen="1" ${e.smart?.aktiv ? 'checked' : ''}><span></span>${t('Smarte Laufzeit je Zone verwenden')}</label>
+        <p class="hinweis">${t('Jede Zone bekommt Zonentyp, Pflanzenfaktor (Kc), eigenen Bodenspeicher, Gießweise (täglich oder tief ab Schwelle) und Beregnungsleistung (von Hand, aus Durchfluss und Fläche oder gemessen mit dem Wasserzähler). Die Laufzeit wird in Minuten berechnet und kann in Durchgänge aufgeteilt werden. Noch nicht in einer ganzen Saison erprobt. Aus = Verhalten wie bisher.')}</p>
+      </section>
+      <section class="karte">
         <div class="kopf"><div><ha-icon icon="mdi:monitor-dashboard"></ha-icon><span>${t('Anzeige')}</span></div></div>
         <div class="formular breit">
           <label>${t('Tippen auf das Logo öffnet')}<span class="feld"><input type="text" data-e="anzeige.logo_link" value="${esc(e.anzeige.logo_link || '')}" placeholder="/lovelace/0" spellcheck="false" autocomplete="off"></span></label>
@@ -1332,9 +1401,39 @@ class BeregnungPanel extends HTMLElement {
           <p class="hinweis">${t('Die Ventile hängen direkt an der Wasserleitung, es gibt keine Pumpe. Mit dem Hauptzähler des Hauses zählt nur der Verbrauch, während eine Zone läuft; mit einem eigenen Gartenzähler der gesamte Verbrauch. Der Grundpreis wird in der Statistik anteilig auf den Zeitraum umgelegt.')}</p>`;
   }
 
+  _einstSmart(c, z, pz) {
+    const s = { ...SMART_STANDARD, ...(z.smart || {}) };
+    const opt = (werte, wahl) => Object.entries(werte).map(([k, x]) => `<option value="${k}" ${k === wahl ? 'selected' : ''}>${esc(t(x))}</option>`).join('');
+    const quellen = { hand: 'von Hand (mm/h)', durchfluss: 'aus Durchfluss und Fläche',
+      ...(this._leitung(c) && c.wasser?.zaehler ? { zaehler: 'gemessen mit dem Wasserzähler' } : {}) };
+    const messung = this._messungText(z);
+    return `
+        <div class="smart-zone">
+          <div class="unterkopf klein"><span>${t('Smarte Laufzeit')}<span class="badge-exp">${t('experimentell')}</span></span></div>
+          <div class="formular">
+            <label>${t('Zonentyp')}<select class="auto" data-e="${pz}.smart.typ" data-zonentyp="${pz}" data-zeichnen="1">${opt(ZONENTYP_TEXT, s.typ)}</select></label>
+            <label>${t('Pflanzenfaktor (Kc)')}${this._zahlFeld(`${pz}.smart.kc`, s.kc, 0.1, 1.5, 0.05)}</label>
+            <label>${t('Fläche')}${this._zahlFeld(`${pz}.smart.flaeche_m2`, s.flaeche_m2, 0.1, 100000, 0.1, 'm²', true, t('optional'))}</label>
+            <label>${t('Bodenspeicher')}${this._zahlFeld(`${pz}.smart.speicher_mm`, s.speicher_mm, 1, 100, 1, 'mm', true, fmt(this._entwurfHolen().wetter.speicher_mm))}</label>
+            <label>${t('Gießweise')}<select class="auto" data-e="${pz}.smart.giessweise" data-zeichnen="1">${opt({ bedarf: 'täglich nach Bedarf', schwelle: 'tief gießen ab Schwelle' }, s.giessweise)}</select></label>
+            ${s.giessweise === 'schwelle' ? `<label>${t('Schwelle (Defizit)')}${this._zahlFeld(`${pz}.smart.schwelle_prozent`, s.schwelle_prozent, 10, 90, 5, '%')}</label>` : ''}
+            <label>${t('Beregnungsleistung')}<select class="auto" data-e="${pz}.smart.leistung_quelle" data-zeichnen="1">${opt(quellen, s.leistung_quelle)}</select></label>
+            ${s.leistung_quelle === 'hand'
+              ? `<label>${t('Leistung')}${this._zahlFeld(`${pz}.leistung_mm_h`, z.leistung_mm_h, 0.1, 200, 0.1, 'mm/h', true, t('optional'))}</label>`
+              : `<label>${t(s.leistung_quelle === 'zaehler' ? 'Durchfluss (Startwert)' : 'Durchfluss')}${this._zahlFeld(`${pz}.smart.durchfluss_l_min`, s.durchfluss_l_min, 0.1, 1000, 0.1, 'L/min', true, t('optional'))}</label>`}
+            ${messung ? `<p class="hinweis">${messung}</p>` : ''}
+            <label>${t('Höchstlaufzeit')}${this._zahlFeld(`${pz}.smart.max_min`, s.max_min, 1, 240, 1, 'min')}</label>
+            <label class="schalter"><input type="checkbox" data-e="${pz}.smart.aufteilen" data-zeichnen="1" ${s.aufteilen ? 'checked' : ''}><span></span>${t('In Durchgänge aufteilen (Cycle & Soak)')}</label>
+            ${s.aufteilen ? `<label>${t('Höchstens je Durchgang')}${this._zahlFeld(`${pz}.smart.durchgang_min`, s.durchgang_min, 1, 240, 1, 'min')}</label>
+            <label>${t('Sickerpause nach Durchgang')}${this._zahlFeld(`${pz}.smart.sickerpause_min`, s.sickerpause_min, 0, 120, 1, 'min')}</label>` : ''}
+          </div>
+        </div>`;
+  }
+
   _einstCtl(c, ci, e) {
     const p = `controller.${ci}`;
     const leitung = this._leitung(c);
+    const smartAn = !!e.smart?.aktiv;
     const zonen = c.zonen.map((z, zi) => `
       <div class="ez">
         <div class="ez-kopf">
@@ -1351,12 +1450,13 @@ class BeregnungPanel extends HTMLElement {
           </div>
           <div class="formular">
             <label>${t('Standardlaufzeit')}${this._zahlFeld(`${p}.zonen.${zi}.standard_min`, z.standard_min, 1, 240, 1, 'min')}</label>
-            <label>${t('Zonenfaktor')}${this._zahlFeld(`${p}.zonen.${zi}.faktor`, z.faktor, 0, 300, 5, '%')}</label>
-            <label>${t('Beregnungsleistung')}${this._zahlFeld(`${p}.zonen.${zi}.leistung_mm_h`, z.leistung_mm_h, 0.1, 200, 0.1, 'mm/h', true, t('optional'))}</label>
+            ${smartAn ? '' : `<label>${t('Zonenfaktor')}${this._zahlFeld(`${p}.zonen.${zi}.faktor`, z.faktor, 0, 300, 5, '%')}</label>
+            <label>${t('Beregnungsleistung')}${this._zahlFeld(`${p}.zonen.${zi}.leistung_mm_h`, z.leistung_mm_h, 0.1, 200, 0.1, 'mm/h', true, t('optional'))}</label>`}
             ${this._leitung(c) ? '' : this._haken(`${p}.zonen.${zi}.wasserhahn`, z.wasserhahn, t('Kann Wasserhahn sein (Ventil folgt der Pumpe)'))}
             ${this._haken(`${p}.zonen.${zi}.regen`, z.regen, t('Regen kürzt die Laufzeit (aus bei überdachten Zonen)'))}
           </div>
         </div>
+        ${smartAn ? this._einstSmart(c, z, `${p}.zonen.${zi}`) : ''}
       </div>`).join('');
     const seqs = c.sequenzen.map((s, si) => this._einstSeq(c, ci, s, si)).join('');
     return `
@@ -1431,7 +1531,7 @@ class BeregnungPanel extends HTMLElement {
     const e = this._entwurfHolen();
     const teile = pfad.split('.');
     let ziel = e;
-    for (const x of teile.slice(0, -1)) ziel = ziel[/^\d+$/.test(x) ? Number(x) : x];
+    for (const x of teile.slice(0, -1)) { const k = /^\d+$/.test(x) ? Number(x) : x; ziel = ziel[k] ?? (ziel[k] = {}); }
     const letzter = teile[teile.length - 1];
     let wert;
     if (el.type === 'checkbox') wert = el.checked;
@@ -1464,7 +1564,7 @@ class BeregnungPanel extends HTMLElement {
     } else if (a === 'e-ctl-weg') {
       if (confirm(t('Controller „{name}“ mit allen Zonen und Sequenzen löschen?', { name: c.name }))) { e.controller.splice(ci, 1); neu(); }
     } else if (a === 'e-zone-neu') {
-      c.zonen.push({ id: zufall('z'), name: t('Zone {n}', { n: c.zonen.length + 1 }), ventile: [''], standard_min: 20, wasserhahn: false, betrieb: 'beregnung', regen: true, faktor: 100, leistung_mm_h: null });
+      c.zonen.push({ id: zufall('z'), name: t('Zone {n}', { n: c.zonen.length + 1 }), ventile: [''], standard_min: 20, wasserhahn: false, betrieb: 'beregnung', regen: true, faktor: 100, leistung_mm_h: null, smart: { ...SMART_STANDARD } });
       neu();
     } else if (a === 'e-zone-weg') {
       const z = c.zonen[i];
@@ -1604,7 +1704,16 @@ class BeregnungPanel extends HTMLElement {
     const el = ev.target;
     const d = el.dataset;
     const paar = (wert) => wert.split('|');
-    if (d.e) { this._entwurfSetzen(d.e, el); if (d.zeichnen) this._zeichnen(); return; }
+    if (d.e) {
+      this._entwurfSetzen(d.e, el);
+      if (d.zonentyp && ZONENTYPEN[el.value]) {
+        // Zonentyp setzt Kc, Bodenspeicher und Gießweise vor
+        const zone = d.zonentyp.split('.').reduce((o, x) => o[/^\d+$/.test(x) ? Number(x) : x], this._entwurfHolen());
+        Object.assign(zone.smart, ZONENTYPEN[el.value]);
+      }
+      if (d.zeichnen) this._zeichnen();
+      return;
+    }
     if (d.tagbetrieb) this._aendern([{ art: 'pumpe', id: d.tagbetrieb, felder: { tagbetrieb: el.checked } }]);
     else if (d.iuCtl) this._dienst('irrigation_unlimited', el.checked ? 'enable' : 'disable', { entity_id: d.iuCtl });
     else if ('wetterAktiv' in d) this._aendern([{ art: 'wetter', felder: { aktiv: el.checked } }]);
@@ -1878,6 +1987,10 @@ input[type=range] { width: 100%; accent-color: var(--blau); height: 28px; cursor
 .zaehler-symbol .einheit { font-size: 10px; }
 .zaehler-symbol.an text { fill: #38bdf8; }
 .formular select.auto { width: auto; }
+.badge-exp { display: inline-block; margin-left: .5rem; padding: .1rem .45rem; border-radius: 999px; font-size: .62rem; font-weight: 600;
+  letter-spacing: .05em; text-transform: uppercase; vertical-align: middle; color: var(--gelb); background: rgba(251, 191, 36, .12); border: 1px solid rgba(251, 191, 36, .4); }
+.smart-zone { margin-top: .9rem; padding-top: .6rem; border-top: 1px dashed var(--rand); }
+.tabelle-scroll { overflow-x: auto; }
 .erweitert summary { cursor: pointer; font-size: .85rem; color: var(--text2); }
 .erweitert[open] summary { margin-bottom: .75rem; }
 .jetzt { stroke: var(--text2); stroke-width: 1; stroke-dasharray: 4 3; }

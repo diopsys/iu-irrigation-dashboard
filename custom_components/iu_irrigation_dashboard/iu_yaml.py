@@ -24,6 +24,7 @@ import yaml
 from homeassistant.core import HomeAssistant
 
 from .const import ANSCHLUSS_LEITUNG, BETRIEB_WASSERHAHN, IU_DATEI, IU_DOMAIN
+from . import smart
 from .einstellungen import pumpe_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -93,6 +94,22 @@ def seq_zone_dauer(ctl: dict[str, Any], sz: dict[str, Any]) -> int:
     return sz["dauer_min"] or (zone["standard_min"] if zone else 20)
 
 
+def seq_eintrag(ctl: dict[str, Any], sz: dict[str, Any], runde: int, nr: dict[str, int],
+                mit_smart: bool = False) -> dict[str, Any]:
+    """Eintrag einer Sequenzzone in der IU-Datei (runde > 0: weiterer
+    Durchgang beim Aufteilen, Sickerpause als Pause nach dem Durchgang)."""
+    eintrag: dict[str, Any] = {
+        "zone_id": str(nr[sz["zone"]]),
+        "duration": _hhmmss(seq_zone_dauer(ctl, sz) * 60),
+        "enabled": seq_zone_aktiv(ctl, sz),
+    }
+    zone = zone_nach_id(ctl, sz["zone"])
+    if (mit_smart and zone and zone["smart"]["aufteilen"] and zone["smart"]["sickerpause_min"]
+            and runde < smart.durchgaenge_max(zone) - 1):
+        eintrag["delay"] = _hhmmss(zone["smart"]["sickerpause_min"] * 60)
+    return eintrag
+
+
 def vollstaendig(daten: dict[str, Any]) -> str | None:
     """None, wenn sich eine IU-Konfiguration erzeugen lässt, sonst der Grund."""
     if not daten["controller"]:
@@ -150,14 +167,8 @@ def erzeugen(daten: dict[str, Any]) -> dict[str, Any]:
             s_eintrag: dict[str, Any] = {
                 "name": seq["name"],
                 "delay": _hhmmss(seq["pause_s"]),
-                "zones": [
-                    {
-                        "zone_id": str(nr[sz["zone"]]),
-                        "duration": _hhmmss(seq_zone_dauer(ctl, sz) * 60),
-                        "enabled": seq_zone_aktiv(ctl, sz),
-                    }
-                    for sz in seq["zonen"]
-                ],
+                "zones": [seq_eintrag(ctl, sz, runde, nr, smart.aktiv(daten))
+                          for sz, runde in smart.iu_eintraege(ctl, seq, smart.aktiv(daten))],
             }
             if plaene:
                 s_eintrag["schedules"] = plaene

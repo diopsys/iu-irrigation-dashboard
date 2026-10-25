@@ -8,6 +8,9 @@ Faktor der Zone (0 … max):
     Bedarf = −B + ET₀(Prognose 24 h) − wirksam × (Regen heute + Prognose 24 h)
     Faktor = Bedarf / R,  R = Beregnungsleistung × Standardzeit oder Referenz
 Regenmengen über 100 mm/Tag gelten als Messfehler (Zählersprung).
+Mit der smarten Laufzeit (experimentell, smart.py) je Zone mit Kc, eigenem
+Speicher und Laufzeit in Minuten; ein Lauf mit Wasserzähler schreibt die
+gemessene Menge (Liter ÷ Fläche) gut.
 
 Laufdaten (Bilanz, verarbeitete Tage, Zähler, letzte Läufe) liegen in
 .storage/beregnung.laufdaten.
@@ -24,7 +27,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from . import et0
+from . import et0, smart
 from .const import LAUFDATEN_KEY
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,6 +73,7 @@ class Wasserbilanz:
             "bilanz": {},             # zone_id → mm
             "minuten": {},            # zone_id → Laufminuten gesamt
             "wasser_l": {},           # zone_id → Liter gesamt (Wasserzähler)
+            "durchfluss": {},         # zone_id → [L/min der letzten Läufe] (Wasserzähler)
             "laeufe": {},             # seq_id/ctl_id → letzter Lauf
             "anzahl": {"automatik": 0, "manuell": 0},
         }
@@ -152,6 +156,10 @@ class Wasserbilanz:
         """Alle noch nicht verarbeiteten Tage bis gestern in die Bilanz
         übernehmen. True, wenn sich etwas geändert hat."""
         wetter = einstellungen["wetter"]
+        if not wetter.get("temperatur"):
+            # ohne Temperatur keine Verdunstung – Tage nicht als verarbeitet
+            # buchen, damit sie nach dem Eintragen der Quellen nachgeholt werden
+            return False
         heute = dt_util.now().date()
         gestern = heute - timedelta(days=1)
         # erster Start: die letzten 14 Tage, damit die Bilanz nicht bei 0 beginnt
@@ -180,20 +188,48 @@ class Wasserbilanz:
             {"tag": tag.isoformat(), "et0": et0_tag, "regen": werte["regen"]}
         ]
         wirksam = wetter["regen_wirksam"] / 100
-        speicher = wetter["speicher_mm"]
+        mit_smart = smart.aktiv(einstellungen)
         for ctl in einstellungen["controller"]:
             for zone in ctl["zonen"]:
+                kc = zone["smart"]["kc"] if mit_smart else 1.0
+                speicher = smart.speicher(zone, wetter) if mit_smart else wetter["speicher_mm"]
                 b = self.daten["bilanz"].get(zone["id"], 0.0)
-                b += (wirksam * werte["regen"] if zone["regen"] else 0.0) - et0_tag
+                b += (wirksam * werte["regen"] if zone["regen"] else 0.0) - kc * et0_tag
                 self.daten["bilanz"][zone["id"]] = round(max(BILANZ_MIN, min(speicher, b)), 2)
 
-    def lauf_gutschreiben(self, zone: dict[str, Any], minuten: float, einstellungen: dict[str, Any]) -> None:
-        """Gelaufene Minuten einer Zone: Zähler und Bodenspeicher."""
+    def lauf_gutschreiben(self, zone: dict[str, Any], minuten: float, einstellungen: dict[str, Any],
+                          gutschrift: bool = True) -> None:
+        """Gelaufene Minuten einer Zone: Zähler und Bodenspeicher. Ohne
+        gutschrift nur der Zähler (die Menge kommt später vom Wasserzähler)."""
         zid = zone["id"]
         self.daten["minuten"][zid] = round(self.daten["minuten"].get(zid, 0.0) + minuten, 1)
-        r = self.referenz(zone, einstellungen["wetter"])
-        b = self.daten["bilanz"].get(zid, 0.0) + minuten / max(1, zone["standard_min"]) * r
-        self.daten["bilanz"][zid] = round(min(einstellungen["wetter"]["speicher_mm"], b), 2)
+        if gutschrift:
+            wetter = einstellungen["wetter"]
+            if smart.aktiv(einstellungen):
+                mm = smart.gutschrift_mm(zone, minuten, wetter, self.daten["durchfluss"].get(zid))
+            else:
+                mm = minuten / max(1, zone["standard_min"]) * self.referenz(zone, wetter)
+            self._gutschreiben(zone, mm, einstellungen)
+        self.speichern()
+
+    def wasser_gutschreiben(self, zone: dict[str, Any], mm: float, einstellungen: dict[str, Any]) -> None:
+        """Gemessene Wassermenge eines Laufs (Liter ÷ Fläche) gutschreiben."""
+        self._gutschreiben(zone, mm, einstellungen)
+        self.speichern()
+
+    def _gutschreiben(self, zone: dict[str, Any], mm: float, einstellungen: dict[str, Any]) -> None:
+        wetter = einstellungen["wetter"]
+        speicher = smart.speicher(zone, wetter) if smart.aktiv(einstellungen) else wetter["speicher_mm"]
+        b = self.daten["bilanz"].get(zone["id"], 0.0) + mm
+        self.daten["bilanz"][zone["id"]] = round(min(speicher, b), 2)
+
+    def durchfluss_messen(self, zone_id: str, liter: float, minuten: float) -> None:
+        """Durchfluss eines Laufs (L/min) für die gemessene Beregnungsleistung."""
+        if liter <= 0 or minuten < 1:
+            return
+        liste = self.daten["durchfluss"].setdefault(zone_id, [])
+        liste.append(round(liter / minuten, 2))
+        del liste[:-smart.MESSUNGEN_MAX]
         self.speichern()
 
     @staticmethod
@@ -235,10 +271,16 @@ class Wasserbilanz:
             et0_prog = self.daten["tage"][-1]["et0"] if self.daten["tage"] else 0.0
         wirksam = wetter["regen_wirksam"] / 100
         max_f = wetter["max_faktor"] / 100
-        faktoren: dict[str, dict[str, float]] = {}
+        mit_smart = smart.aktiv(einstellungen)
+        faktoren: dict[str, dict[str, Any]] = {}
         for ctl in einstellungen["controller"]:
             for zone in ctl["zonen"]:
                 b = self.daten["bilanz"].get(zone["id"], 0.0)
+                if mit_smart:
+                    faktoren[zone["id"]] = smart.planen(
+                        zone, b, et0_prog, regen_heute + prognose.get("regen", 0.0), regnet, wetter,
+                        self.daten["durchfluss"].get(zone["id"]))
+                    continue
                 regen = wirksam * (regen_heute + prognose.get("regen", 0.0)) if zone["regen"] else 0.0
                 bedarf = -b + et0_prog - regen
                 r = self.referenz(zone, wetter)
