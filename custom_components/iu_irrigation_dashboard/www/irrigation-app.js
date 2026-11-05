@@ -61,7 +61,9 @@ const TEXTE = {
     // Übersicht
     'Manueller Lauf': 'Manual run', 'Automatik · {name}': 'Automatic · {name}', 'Einzellauf': 'Single run', 'Manuell · {name}': 'Manual · {name}',
     'Automatik aus': 'Automatic off', 'nur manuelle Läufe': 'manual runs only', 'Bereit': 'Ready', 'nächster Lauf {wann}': 'next run {wann}',
-    'kein Lauf geplant': 'no run scheduled', 'Keine Zonen.': 'No zones.', 'Pumpe Sonnenauf- bis -untergang': 'Pump on from sunrise to sunset',
+    'kein Bedarf': 'not needed', 'kein Bedarf · Bilanz {bilanz} mm': 'not needed · balance {bilanz} mm', 'kein Bedarf · es regnet': 'not needed · raining',
+    'kein Termin von Irrigation Unlimited': 'no date from Irrigation Unlimited', 'keine Zone in der Automatik': 'no zone in automatic mode', 'kein Plan für diesen Monat': 'no plan for this month',
+    'Plan „{name}“ ohne Wochentage': 'plan “{name}” has no weekdays', 'Plan „{name}“ steht auf 0 %': 'plan “{name}” is set to 0 %', 'Grundfaktor steht auf 0 %': 'base factor is set to 0 %', 'Keine Zonen.': 'No zones.', 'Pumpe Sonnenauf- bis -untergang': 'Pump on from sunrise to sunset',
     'Stoppen': 'Stop', 'Status': 'Status', 'Nächster Lauf': 'Next run', 'Letzter Lauf': 'Last run', 'noch keiner erfasst': 'none recorded yet',
     'Verdunstung': 'Evaporation', 'nächste 24 h · Regen heute {heute} mm, Prognose {prognose} mm': 'next 24 h · rain today {heute} mm, forecast {prognose} mm',
     // Automatik
@@ -818,6 +820,37 @@ class BeregnungPanel extends HTMLElement {
     }
     return liste.sort((a, b) => a.start - b.start);
   }
+  // Warum nichts ansteht, obwohl die Automatik an ist. „Kein Bedarf“ hat Vorrang (der Normalfall),
+  // sonst der erste Grund aus den Einstellungen; mit Zonen über 0 % und ohne Termin liegt es an Irrigation Unlimited.
+  _keinLaufText() {
+    const wt = this._e().wetter || {};
+    const w = this._z().wetter || {};
+    const keinTermin = t('kein Termin von Irrigation Unlimited');
+    let trockenste = null;
+    let grund = null;
+    const merke = (text) => { grund = grund || text; };
+    for (const c of this._ctlListe()) {
+      if (!this._a(this._zu().controller[c.id], 'enabled')) continue;
+      for (const s of c.sequenzen) {
+        const soll = (this._z().sequenzen || {})[s.id];
+        const zeilen = s.zonen.map((sz) => ({ sz, z: c.zonen.find((x) => x.id === sz.zone), sl: (soll?.zonen || {})[sz.zone] }))
+          .filter(({ sz, z, sl }) => z && sz.aktiv && !this._hahnAktiv(z) && (sl?.smart || z.faktor !== 0));
+        if (!zeilen.length) { merke(t('keine Zone in der Automatik')); continue; }
+        if (!soll?.plan) { merke(t('kein Plan für diesen Monat')); continue; }
+        const plan = s.plaene.find((p) => p.name === soll.plan);
+        if (plan && !plan.tage.length) { merke(t('Plan „{name}“ ohne Wochentage', { name: soll.plan })); continue; }
+        if (!(soll.plan_prozent > 0)) { merke(t('Plan „{name}“ steht auf 0 %', { name: soll.plan })); continue; }
+        if (!(wt.grundfaktor > 0)) { merke(t('Grundfaktor steht auf 0 %')); continue; }
+        const bilanzen = zeilen.map(({ sz }) => (w.zonen || {})[sz.zone]);
+        if (!wt.aktiv || !s.wetter || !bilanzen.every(Boolean) || zeilen.some(({ sl }) => sl?.prozent > 0)) { merke(keinTermin); continue; }
+        for (const d of bilanzen) if (!trockenste || d.bilanz < trockenste.bilanz) trockenste = d;
+      }
+    }
+    if (!trockenste) return grund || keinTermin;
+    if (trockenste.smart) return this._grundText(trockenste) || t('kein Bedarf');
+    if (w.regnet) return t('kein Bedarf · es regnet');
+    return t('kein Bedarf · Bilanz {bilanz} mm', { bilanz: `${trockenste.bilanz > 0 ? '+' : ''}${fmt(trockenste.bilanz, 1)}` });
+  }
   _letzteLaeufe() {
     const laeufe = this._z().laeufe || {};
     return Object.entries(laeufe).map(([id, l]) => ({ id, ...l })).sort((a, b) => new Date(b.start) - new Date(a.start));
@@ -841,7 +874,7 @@ class BeregnungPanel extends HTMLElement {
     let status, statusSub, klasse;
     if (laeufe.length) { status = laeufe.map((l) => l.name).join(', '); statusSub = laeufe.map((l) => l.plan).join(', '); klasse = 'blau'; }
     else if (!autoAn) { status = t('Automatik aus'); statusSub = t('nur manuelle Läufe'); klasse = 'gelb'; }
-    else { status = t('Bereit'); statusSub = n ? t('nächster Lauf {wann}', { wann: relativ(n.start) }) : t('kein Lauf geplant'); klasse = 'gruen'; }
+    else { status = t('Bereit'); statusSub = n ? t('nächster Lauf {wann}', { wann: relativ(n.start) }) : t('Automatik an'); klasse = 'gruen'; }
 
     const karten = this._ctlListe().map((c) => {
       const lauf = this._aktuellerLauf(c);
@@ -864,7 +897,7 @@ class BeregnungPanel extends HTMLElement {
     return `
       <section class="kacheln">
         ${this._kachel(t('Status'), status, '', statusSub, klasse, 'mdi:information-outline')}
-        ${this._kachel(t('Nächster Lauf'), n ? fmtZeit(n.start) : '–', '', n ? `${esc(n.seq.name)}${n.plan ? ` · ${esc(n.plan)}` : ''}${n.dauer ? ` · ${fmtDauer(n.dauer)}` : ''}` : t(autoAn ? 'kein Lauf geplant' : 'Automatik aus'), 'blau', 'mdi:calendar-arrow-right')}
+        ${this._kachel(t('Nächster Lauf'), n ? fmtZeit(n.start) : '–', '', n ? `${esc(n.seq.name)}${n.plan ? ` · ${esc(n.plan)}` : ''}${n.dauer ? ` · ${fmtDauer(n.dauer)}` : ''}` : esc(autoAn ? this._keinLaufText() : t('Automatik aus')), 'blau', 'mdi:calendar-arrow-right')}
         ${this._kachel(t('Letzter Lauf'), letzter ? fmtZeit(letzter.start) : '–', '', letzter ? `${esc(this._seqName(letzter.id))} · ${fmtMin(letzter.dauer_min)} · ${relativ(letzter.start)}` : t('noch keiner erfasst'), 'lila', 'mdi:calendar-check')}
         ${this._kachel(t('Verdunstung'), w.et0_prognose != null ? fmt(w.et0_prognose, 1) : '–', 'mm', t('nächste 24 h · Regen heute {heute} mm, Prognose {prognose} mm', { heute: fmt(w.regen_heute, 1), prognose: fmt(w.regen_prognose, 1) }), 'tuerkis', 'mdi:weather-sunny-alert')}
       </section>
